@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS users (
   disabled BOOLEAN NOT NULL DEFAULT FALSE
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (lower(username));
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_idx ON users (lower(email));
+
 CREATE TABLE IF NOT EXISTS quizzes (
   id SERIAL PRIMARY KEY,
   title TEXT NOT NULL UNIQUE,

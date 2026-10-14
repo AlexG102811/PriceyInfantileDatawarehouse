@@ -112,6 +112,12 @@ function validQuestion(question) {
   return { errors, values: { text, choices, correct, position } };
 }
 
+async function normalizeQuestionPositions(client, questionIds) {
+  for (const [index, id] of questionIds.entries()) {
+    await client.query("UPDATE questions SET position = $1 WHERE id = $2", [index + 1, id]);
+  }
+}
+
 async function loadAttempt(attemptId, userId, lock = false, client = pool) {
   const query = `SELECT a.*, q.title AS quiz_title, q.time_limit_seconds
     FROM attempts a JOIN quizzes q ON q.id = a.quiz_id
@@ -245,7 +251,10 @@ app.post("/api/auth/logout", (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/api/auth/me", requireAuth, (req, res) => res.json({ user: req.user }));
+app.get("/api/auth/me", (req, res, next) => {
+  if (!cookieValue(req.headers.cookie, COOKIE_NAME)) return res.json({ user: null });
+  requireAuth(req, res, next);
+}, (req, res) => res.json({ user: req.user }));
 
 app.get("/api/quizzes", requireAuth, asyncRoute(async (req, res) => {
   const result = await pool.query(
@@ -301,26 +310,36 @@ app.get("/api/attempts/:id", requireAuth, asyncRoute(async (req, res) => {
   if (attempt.status !== "in_progress") return res.status(409).json({ error: "This attempt is no longer in progress." });
   const answers = await pool.query("SELECT question_id AS \"questionId\", chosen_choice AS choice FROM answer_events WHERE attempt_id = $1", [attempt.id]);
   res.json({
-    attempt: { id: attempt.id, quizTitle: attempt.quiz_title, startedAt: attempt.started_at, timeLimitSeconds: attempt.time_limit_seconds },
+    attempt: { id: attempt.id, quizId: attempt.quiz_id, quizTitle: attempt.quiz_title, startedAt: attempt.started_at, timeLimitSeconds: attempt.time_limit_seconds },
     questions: await attemptQuestions(attempt),
     answers: answers.rows
   });
 }));
 
 app.patch("/api/attempts/:id", requireAuth, asyncRoute(async (req, res) => {
-  const attempt = await loadAttempt(req.params.id, req.user.id);
-  if (!attempt) return res.status(404).json({ error: "Attempt not found." });
-  if (attempt.status !== "in_progress") return res.status(409).json({ error: "This attempt is no longer in progress." });
-  const elapsedMs = Date.now() - new Date(attempt.started_at).getTime();
-  if (attempt.time_limit_seconds && elapsedMs > attempt.time_limit_seconds * 1000) {
-    return res.status(409).json({ error: "Time is up. Submit your quiz to finish it." });
-  }
-  const answers = Array.isArray(req.body.answers) ? req.body.answers : [];
-  if (answers.length > attempt.total_questions) return res.status(400).json({ error: "Too many answers were submitted." });
-  const allowedIds = new Set(attempt.question_snapshot.map(Number));
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const attempt = await loadAttempt(req.params.id, req.user.id, true, client);
+    if (!attempt) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Attempt not found." });
+    }
+    if (attempt.status !== "in_progress") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "This attempt is no longer in progress." });
+    }
+    const elapsedMs = Date.now() - new Date(attempt.started_at).getTime();
+    if (attempt.time_limit_seconds && elapsedMs > attempt.time_limit_seconds * 1000) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Time is up. Submit your quiz to finish it." });
+    }
+    const answers = Array.isArray(req.body.answers) ? req.body.answers : [];
+    if (answers.length > attempt.total_questions) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Too many answers were submitted." });
+    }
+    const allowedIds = new Set(attempt.question_snapshot.map(Number));
     for (const answer of answers) {
       const questionId = Number(answer.questionId);
       const choice = normalizeChoice(answer.choice);
@@ -558,33 +577,95 @@ app.get("/api/admin/quizzes/:id/questions", requireAuth, requireAdmin, asyncRout
 }));
 
 app.post("/api/admin/quizzes/:id/questions", requireAuth, requireAdmin, asyncRoute(async (req, res) => {
-  const quiz = await pool.query("SELECT id FROM quizzes WHERE id = $1", [req.params.id]);
-  if (!quiz.rows[0]) return res.status(404).json({ error: "Quiz not found." });
   const { errors, values } = validQuestion(req.body);
   if (Object.keys(errors).length) return res.status(400).json({ error: "Check the question fields.", fields: errors });
-  const count = await pool.query("SELECT COALESCE(MAX(position), 0)::int AS max FROM questions WHERE quiz_id = $1", [req.params.id]);
-  const position = values.position || count.rows[0].max + 1;
-  const result = await pool.query(
-    `INSERT INTO questions (quiz_id, question_text, choice_a, choice_b, choice_c, choice_d, correct_choice, position)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-    [req.params.id, values.text, ...values.choices, values.correct, position]
-  );
-  res.status(201).json({ id: result.rows[0].id });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const quiz = await client.query("SELECT id FROM quizzes WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (!quiz.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Quiz not found." });
+    }
+    const existing = await client.query("SELECT id FROM questions WHERE quiz_id = $1 ORDER BY position, id FOR UPDATE", [req.params.id]);
+    const ids = existing.rows.map((row) => row.id);
+    const position = Math.max(1, Math.min(values.position || ids.length + 1, ids.length + 1));
+    const result = await client.query(
+      `INSERT INTO questions (quiz_id, question_text, choice_a, choice_b, choice_c, choice_d, correct_choice, position)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [req.params.id, values.text, ...values.choices, values.correct, ids.length + 1]
+    );
+    ids.splice(position - 1, 0, result.rows[0].id);
+    await normalizeQuestionPositions(client, ids);
+    await client.query("COMMIT");
+    res.status(201).json({ id: result.rows[0].id });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }));
 
 app.patch("/api/admin/questions/:id", requireAuth, requireAdmin, asyncRoute(async (req, res) => {
-  const existing = await pool.query("SELECT id, quiz_id FROM questions WHERE id = $1", [req.params.id]);
-  if (!existing.rows[0]) return res.status(404).json({ error: "Question not found." });
   const { errors, values } = validQuestion(req.body);
   if (Object.keys(errors).length) return res.status(400).json({ error: "Check the question fields.", fields: errors });
-  const max = await pool.query("SELECT COALESCE(MAX(position), 0)::int AS max FROM questions WHERE quiz_id = $1", [existing.rows[0].quiz_id]);
-  const position = Math.min(values.position || max.rows[0].max, max.rows[0].max);
-  await pool.query(
-    `UPDATE questions SET question_text = $1, choice_a = $2, choice_b = $3, choice_c = $4,
-      choice_d = $5, correct_choice = $6, position = $7 WHERE id = $8`,
-    [values.text, ...values.choices, values.correct, position, req.params.id]
-  );
-  res.json({ saved: true });
+  const requestedQuizId = req.body.quizId == null ? null : Number(req.body.quizId);
+  if (requestedQuizId !== null && (!Number.isInteger(requestedQuizId) || requestedQuizId < 1)) {
+    return res.status(400).json({ error: "Choose a valid quiz assignment." });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const initial = await client.query("SELECT quiz_id FROM questions WHERE id = $1", [req.params.id]);
+    if (!initial.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Question not found." });
+    }
+    const sourceQuizId = initial.rows[0].quiz_id;
+    const destinationQuizId = requestedQuizId || sourceQuizId;
+    const lockedQuizzes = await client.query(
+      "SELECT id FROM quizzes WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE",
+      [[...new Set([sourceQuizId, destinationQuizId])]]
+    );
+    if (lockedQuizzes.rows.length < new Set([sourceQuizId, destinationQuizId]).size) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Quiz assignment not found." });
+    }
+    const question = await client.query("SELECT id, quiz_id, position FROM questions WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (!question.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Question not found." });
+    }
+    const current = question.rows[0];
+    const sourceList = await client.query("SELECT id FROM questions WHERE quiz_id = $1 ORDER BY position, id FOR UPDATE", [sourceQuizId]);
+    const sourceIds = sourceList.rows.map((row) => row.id).filter((id) => id !== current.id);
+    let destinationIds = sourceIds;
+    let position;
+    if (destinationQuizId === sourceQuizId) {
+      position = Math.max(1, Math.min(values.position || current.position, sourceIds.length + 1));
+      destinationIds.splice(position - 1, 0, current.id);
+    } else {
+      const destinationList = await client.query("SELECT id FROM questions WHERE quiz_id = $1 ORDER BY position, id FOR UPDATE", [destinationQuizId]);
+      destinationIds = destinationList.rows.map((row) => row.id);
+      position = Math.max(1, Math.min(values.position || destinationIds.length + 1, destinationIds.length + 1));
+      destinationIds.splice(position - 1, 0, current.id);
+    }
+    await client.query(
+      `UPDATE questions SET question_text = $1, choice_a = $2, choice_b = $3, choice_c = $4,
+        choice_d = $5, correct_choice = $6, quiz_id = $7 WHERE id = $8`,
+      [values.text, ...values.choices, values.correct, destinationQuizId, current.id]
+    );
+    if (destinationQuizId !== sourceQuizId) await normalizeQuestionPositions(client, sourceIds);
+    await normalizeQuestionPositions(client, destinationIds);
+    await client.query("COMMIT");
+    res.json({ saved: true });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }));
 
 app.patch("/api/admin/questions/:id/visibility", requireAuth, requireAdmin, asyncRoute(async (req, res) => {
@@ -594,12 +675,36 @@ app.patch("/api/admin/questions/:id/visibility", requireAuth, requireAdmin, asyn
 }));
 
 app.delete("/api/admin/questions/:id", requireAuth, requireAdmin, asyncRoute(async (req, res) => {
-  const question = await pool.query("SELECT id FROM questions WHERE id = $1", [req.params.id]);
-  if (!question.rows[0]) return res.status(404).json({ error: "Question not found." });
-  const history = await pool.query("SELECT EXISTS (SELECT 1 FROM answer_events WHERE question_id = $1) AS has_history", [req.params.id]);
-  if (history.rows[0].has_history && req.body.force !== true) return res.status(409).json({ error: "This question has answer history. Hide it to preserve analytics, or confirm permanent deletion." });
-  await pool.query("DELETE FROM questions WHERE id = $1", [req.params.id]);
-  res.json({ deleted: true, historyRemoved: history.rows[0].has_history });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const initial = await client.query("SELECT quiz_id FROM questions WHERE id = $1", [req.params.id]);
+    if (!initial.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Question not found." });
+    }
+    await client.query("SELECT id FROM quizzes WHERE id = $1 FOR UPDATE", [initial.rows[0].quiz_id]);
+    const question = await client.query("SELECT id, quiz_id FROM questions WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (!question.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Question not found." });
+    }
+    const history = await client.query("SELECT EXISTS (SELECT 1 FROM answer_events WHERE question_id = $1) AS has_history", [req.params.id]);
+    if (history.rows[0].has_history && req.body.force !== true) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "This question has answer history. Hide it to preserve analytics, or confirm permanent deletion." });
+    }
+    await client.query("DELETE FROM questions WHERE id = $1", [req.params.id]);
+    const remaining = await client.query("SELECT id FROM questions WHERE quiz_id = $1 ORDER BY position, id FOR UPDATE", [question.rows[0].quiz_id]);
+    await normalizeQuestionPositions(client, remaining.rows.map((row) => row.id));
+    await client.query("COMMIT");
+    res.json({ deleted: true, historyRemoved: history.rows[0].has_history });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }));
 
 app.post("/api/admin/quizzes/:id/import/preview", requireAuth, requireAdmin, ensureCsvRequest, asyncRoute(async (req, res) => {
@@ -623,10 +728,12 @@ app.post("/api/admin/quizzes/:id/import/preview", requireAuth, requireAdmin, ens
   const seen = new Set(existingQuestions.rows.map((row) => row.text));
   const previewRows = [];
   const errors = parsed.errors;
+  const malformedRows = new Set(parsed.errors.map((error) => error.row));
   const validRows = [];
   let skipped = 0;
   for (const record of dataRows) {
     if (!record.values.some((value) => value.trim())) continue;
+    if (malformedRows.has(record.number)) continue;
     if (record.values.length !== headers.length) {
       errors.push({ row: record.number, reason: `Expected ${headers.length} columns but found ${record.values.length}.` });
       continue;
@@ -656,9 +763,6 @@ app.post("/api/admin/quizzes/:id/import/preview", requireAuth, requireAdmin, ens
     const valid = { row: record.number, question, choices, correct, position };
     validRows.push(valid);
     previewRows.push({ row: record.number, question, choices, correct, status: "valid" });
-  }
-  for (const header of unknown) {
-    // Unknown columns are intentionally ignored and surfaced as warnings in the preview.
   }
   const token = crypto.randomBytes(24).toString("hex");
   importPreviews.set(token, { quizId, userId: req.user.id, validRows, createdAt: Date.now() });
@@ -789,21 +893,45 @@ app.get("/api/admin/stats", requireAuth, requireAdmin, asyncRoute(async (req, re
      GROUP BY q.id ORDER BY "missRate" DESC, "timesAnswered" DESC LIMIT 10`,
     [from, to, quizId]
   );
+  const scoreBands = await pool.query(
+    `SELECT CASE
+        WHEN points::numeric * 100 / NULLIF(total_questions, 0) < 20 THEN '0–19%'
+        WHEN points::numeric * 100 / NULLIF(total_questions, 0) < 40 THEN '20–39%'
+        WHEN points::numeric * 100 / NULLIF(total_questions, 0) < 60 THEN '40–59%'
+        WHEN points::numeric * 100 / NULLIF(total_questions, 0) < 80 THEN '60–79%'
+        ELSE '80–100%' END AS band, COUNT(*)::int AS attempts
+     FROM attempts WHERE status = 'completed' AND finished_at >= $1::date AND finished_at < $2::date + INTERVAL '1 day'
+       AND ($3::int IS NULL OR quiz_id = $3)
+     GROUP BY band ORDER BY MIN(points::numeric / NULLIF(total_questions, 0))`,
+    [from, to, quizId]
+  );
+  const rangeDays = Math.max(1, Math.ceil((new Date(`${to}T00:00:00Z`) - new Date(`${from}T00:00:00Z`)) / 86400000) + 1);
+  const previousFrom = new Date(new Date(`${from}T00:00:00Z`).getTime() - rangeDays * 86400000).toISOString().slice(0, 10);
+  const previousTo = new Date(new Date(`${from}T00:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10);
   const byQuiz = await pool.query(
     `SELECT q.id, q.title, COUNT(a.id)::int AS attempts,
       ROUND(AVG(a.points::numeric * 100 / NULLIF(a.total_questions, 0)), 1) AS "averageScore",
-      ROUND(AVG(EXTRACT(EPOCH FROM (a.finished_at - a.started_at)))::numeric, 0) AS "averageSeconds"
+      ROUND(AVG(EXTRACT(EPOCH FROM (a.finished_at - a.started_at)))::numeric, 0) AS "averageSeconds",
+      (SELECT ROUND(AVG(p.points::numeric * 100 / NULLIF(p.total_questions, 0)), 1)
+       FROM attempts p WHERE p.quiz_id = q.id AND p.status = 'completed'
+         AND p.finished_at >= $4::date AND p.finished_at < $5::date + INTERVAL '1 day') AS "previousAverageScore"
      FROM quizzes q LEFT JOIN attempts a ON a.quiz_id = q.id AND a.status = 'completed'
        AND a.finished_at >= $1::date AND a.finished_at < $2::date + INTERVAL '1 day'
      WHERE ($3::int IS NULL OR q.id = $3)
      GROUP BY q.id ORDER BY q.id`,
-    [from, to, quizId]
+    [from, to, quizId, previousFrom, previousTo]
   );
-  res.json({ overview: overview.rows[0], trends: trends.rows, misses: misses.rows, quizzes: byQuiz.rows });
+  res.json({ overview: overview.rows[0], trends: trends.rows, scoreBands: scoreBands.rows, misses: misses.rows, quizzes: byQuiz.rows });
 }));
 
-app.use(express.static(path.join(__dirname, "public"), { etag: true, maxAge: "1h" }));
-app.get("*", (req, res, next) => {
+app.use(express.static(path.join(__dirname, "public"), {
+  etag: false,
+  maxAge: 0,
+  setHeaders(res) {
+    res.setHeader("Cache-Control", "no-store");
+  }
+}));
+app.get(/.*/, (req, res, next) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "API route not found." });
   res.sendFile(path.join(__dirname, "public", "index.html"), (error) => error && next(error));
 });
