@@ -11,7 +11,7 @@ Replit provides `DATABASE_URL` and `SESSION_SECRET` in the project environment. 
 3. Start the server with `npm run dev` (or `npm start`).
 4. Register a player account from the sign-in screen.
 
-The seed command adds five example quizzes with ten questions each. It does not overwrite existing question sets. Regular registration always creates a player account.
+The seed command adds five quizzes with ten questions each: three about baseball and two about Rainbow Six Siege. It does not overwrite existing question sets. It archives the original general-knowledge sample quizzes without deleting their questions or attempt history. Regular registration always creates a player account.
 
 For production, publish the development schema through Replit's Publish flow. Do not run the development setup command against a production database. Seed production content and the initial admin separately using that environment's approved database workflow.
 
