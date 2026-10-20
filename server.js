@@ -943,11 +943,15 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: "Something went wrong. Please try again." });
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Quiz app listening on port ${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Quiz app listening on port ${PORT}`);
+  });
 
-process.on("SIGTERM", async () => {
-  await pool.end();
-  process.exit(0);
-});
+  process.on("SIGTERM", async () => {
+    await pool.end();
+    process.exit(0);
+  });
+}
+
+module.exports = { app, pool };

@@ -15,6 +15,11 @@ The seed command adds five example quizzes with ten questions each. It does not 
 
 For production, publish the development schema through Replit's Publish flow. Do not run the development setup command against a production database. Seed production content and the initial admin separately using that environment's approved database workflow.
 
+
+## Run the regression tests
+
+Run `npm test` in the development environment. Tests use `DATABASE_URL` to create a uniquely named temporary schema, apply the app schema there, and drop it when the run finishes. They do not read or modify the app's regular tables or seed data, and refuse to run with `NODE_ENV=production`.
+
 ## Included features
 
 - Player registration, sign-in, sign-out, and profile/password updates.
