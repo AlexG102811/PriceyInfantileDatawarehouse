@@ -91,6 +91,78 @@ const quizzes = [
       ["What is a key purpose of an operator's unique gadget?", "Replace the round objective", "Make the operator immune to damage", "Give that operator a specialized tactical tool", "Reveal the entire map permanently", "c"],
       ["When choosing an operator, what should a team consider?", "How the operator's role and gadget support the plan", "Only the operator's uniform color", "Whether the operator can avoid the objective", "How many walls the operator can reinforce alone", "a"]
     ]
+  },
+  {
+    title: "Baseball: Advanced Rules & Situations",
+    topic: "Baseball",
+    difficulty: "hard",
+    timeLimit: null,
+    questions: [
+      ["With fewer than two outs and runners on first and second, an umpire calls an infield fly. What is the result?", "The batter is out and runners may advance at their own risk", "The ball is dead and every runner must return", "The batter may run to first if the ball drops", "The call is valid only after two outs", "a"],
+      ["When may a batter try to reach first after an uncaught third strike?", "Only when the catcher throws the ball away", "When first base is unoccupied or there are two outs", "Only with a runner on third", "Whenever the pitch is in the dirt", "b"],
+      ["With runners on base, what is the usual effect of a balk?", "The batter is automatically out", "The defense may replace its pitcher", "Each runner is awarded one base", "The count resets to no balls and no strikes", "c"],
+      ["A runner tags up and scores on a caught fly ball with fewer than two outs. What may the batter be credited with?", "A fielder's choice", "A sacrifice fly", "A stolen base", "A ground-rule double", "b"],
+      ["A batter becomes a runner and forces the runner from first to advance. How can the defense retire that runner at second on a force play?", "Tag the runner before the ball is hit", "Touch second base with the ball before the runner arrives", "Touch first base after the batter reaches it", "Throw the ball to the pitcher", "b"],
+      ["After a fielder catches a fly ball, what must a runner do before advancing from their original base?", "Wait for the next pitch", "Touch home plate", "Retouch the original base after the catch", "Ask the umpire for permission", "c"],
+      ["What is the main purpose of a pitcher's pickoff attempt?", "Make the batter leave the box", "Force a foul ball", "End a half-inning automatically", "Catch a runner too far from a base", "d"],
+      ["With two strikes, what happens when a batter bunts the pitch foul?", "The count stays at two strikes", "The batter is awarded first base", "The batter is out on a third strike", "The foul ball becomes fair", "c"],
+      ["What makes a force out different from a tag out?", "A force out requires the runner to touch home", "On a force play, touching the base with the ball can retire the runner", "A force out can only happen in the outfield", "A tag out does not require the ball", "b"],
+      ["A runner leaves a base before a fly ball is caught. What must the runner do to avoid being doubled off?", "Run directly to the next base", "Wait for the ball to reach the infield", "Touch the pitcher's plate", "Return and retouch the base before advancing", "d"]
+    ]
+  },
+  {
+    title: "Baseball: Stats & Scoring Challenge",
+    topic: "Baseball",
+    difficulty: "hard",
+    timeLimit: null,
+    questions: [
+      ["How is WHIP calculated?", "Home runs plus strikeouts per game", "Walks plus hits allowed, divided by innings pitched", "Wins divided by innings pitched", "Earned runs plus walks, divided by batters faced", "b"],
+      ["What does OPS add together?", "Batting average and earned run average", "Hits and runs scored", "On-base percentage and slugging percentage", "Walks and strikeouts", "c"],
+      ["What does a pitcher's ERA represent?", "Total runs allowed per start", "Earned runs allowed per nine innings", "Strikeouts per nine innings", "Walks allowed per game", "b"],
+      ["How is slugging percentage calculated?", "Hits divided by at-bats", "Runs divided by plate appearances", "Home runs divided by hits", "Total bases divided by at-bats", "d"],
+      ["Which set of outcomes contributes to a batter reaching base for on-base percentage?", "Hits, errors, and stolen bases", "Runs, walks, and strikeouts", "Hits, walks, and hit-by-pitches", "Hits, sacrifice bunts, and caught stealing", "c"],
+      ["A hitter gets two singles and one double. How many total bases did the hitter earn?", "Four", "Three", "Six", "Five", "a"],
+      ["What is the key difference between a perfect game and a no-hitter?", "A perfect game allows walks but no hits", "In a perfect game, no opposing batter reaches base", "A no-hitter requires no baserunners of any kind", "A perfect game is always shorter than nine innings", "b"],
+      ["A batter reaches first because a fielder makes an error. How is that normally scored?", "As a hit and an at-bat", "As a walk", "As a hit-by-pitch", "Not as a hit; it generally counts as an at-bat", "d"],
+      ["How many total bases does a home run count for in slugging percentage?", "One", "Two", "Four", "Three", "c"],
+      ["A batter has one single, one double, and one home run in four at-bats. What is the slugging percentage?", "1.000", "1.500", "1.750", "2.000", "c"]
+    ]
+  },
+  {
+    title: "Rainbow Six Siege: Advanced Map Control",
+    topic: "Rainbow Six Siege",
+    difficulty: "hard",
+    timeLimit: 900,
+    questions: [
+      ["What does vertical play use to pressure a site from another floor?", "Drones to map a different floor", "A reinforcement placed on a doorway", "Destructible floors or ceilings", "A second defuser", "c"],
+      ["Why should attackers try to keep some drones alive after the preparation phase?", "Drones can reinforce walls", "A live drone can provide information later in the round", "A drone can plant the defuser", "A live drone prevents defenders from roaming", "b"],
+      ["What does a roam clear aim to accomplish?", "Reinforce every wall on the map", "Move the objective to another room", "Use all attacker gadgets before entering", "Locate and displace defenders playing away from the objective", "d"],
+      ["What is the purpose of a flank watch during an execute?", "Monitor routes defenders could use to approach from behind", "Reveal every defender through walls", "Prevent attackers from using their drones", "Keep the defuser in the preparation phase", "a"],
+      ["What is a crossfire?", "Every teammate entering through the same doorway", "A defender reinforcing a soft wall", "Two teammates covering an area from different angles", "An attacker using a drone and a breach charge at once", "c"],
+      ["After the defuser is planted, what is the attackers' main priority?", "Leave the building immediately", "Destroy every remaining reinforcement", "Pick up every unused gadget", "Protect access to the planted defuser and stop defenders disabling it", "d"],
+      ["What does creating a rotation hole between defensive positions help a team do?", "Make reinforced walls indestructible", "Move between connected areas without using a doorway", "Prevent all sound from traveling", "Guarantee that attackers cannot enter the site", "b"],
+      ["What does gaining map control generally give attackers?", "Safer routes, useful information, and pressure on defender rotations", "A guaranteed round win", "The ability to disable the round timer", "Automatic control of the objective", "a"],
+      ["Why is it useful to drone an entry before an attacker commits to it?", "It makes the entry impossible to defend", "It prevents all defender gadgets from activating", "It automatically clears the room", "It can reveal immediate threats and help choose a safer entry", "d"],
+      ["What is a common purpose of clearing defender utility before a coordinated push?", "Make the attackers invisible", "Extend the round timer", "Reduce the gadgets and obstacles that could stop the execute", "Force defenders to select new operators", "c"]
+    ]
+  },
+  {
+    title: "Rainbow Six Siege: Team Coordination Challenge",
+    topic: "Rainbow Six Siege",
+    difficulty: "hard",
+    timeLimit: 900,
+    questions: [
+      ["What is a trade after a teammate is eliminated?", "Switching to a different operator mid-round", "Taking turns reinforcing the same wall", "Eliminating the opponent who just eliminated that teammate", "Using a drone to watch the preparation phase", "c"],
+      ["Why should a team communicate enemy locations and gadget information?", "It increases every operator's health", "Shared information helps teammates make coordinated decisions", "It reveals the full map automatically", "It pauses the round timer", "b"],
+      ["What is a key risk of all attackers entering through one predictable doorway?", "The defuser stops working", "The objective moves to another site", "Their drones become unusable", "They can be funneled into the same defended angles", "d"],
+      ["What does anchoring describe for a defender?", "Staying on or near the objective site to defend it", "Attacking from outside the building", "Following an attacker drone around the map", "Leaving the objective undefended to chase eliminations", "a"],
+      ["When should attackers generally attempt a defuser plant?", "Before scouting any nearby threats", "Only after every defender is eliminated", "When they have enough control and cover to protect the planting area", "As soon as the round starts, regardless of position", "c"],
+      ["What is utility clearing intended to do before an execute?", "Restore defender gadgets", "Remove, disable, or use up defensive gadgets that could disrupt the push", "Replace the objective with a new one", "Stop attackers from making callouts", "b"],
+      ["Why might attackers use soft destruction near an objective?", "To reinforce the site from outside", "To prevent teammates from rotating", "To make every wall indestructible", "To create sightlines or routes through destructible surfaces", "d"],
+      ["What does a teammate watching a flank help prevent?", "An attacker drone reaching the site", "The defuser being planted", "A defender rotating into the attacking group unnoticed", "A reinforcement being placed", "c"],
+      ["Why can a coordinated execute be stronger than several unconnected individual pushes?", "Teammates can apply pressure from multiple angles at the same time", "It removes the need to identify the objective", "It guarantees all gadgets are available", "It disables friendly fire", "a"],
+      ["When the round is nearly over, what should attackers prioritize?", "Continuing to explore unrelated rooms", "A timely, coordinated attempt to complete the objective", "Saving every gadget for the next round", "Waiting outside until the round timer ends", "b"]
+    ]
   }
 ];
 

@@ -11,7 +11,7 @@ Replit provides `DATABASE_URL` and `SESSION_SECRET` in the project environment. 
 3. Start the server with `npm run dev` (or `npm start`).
 4. Register a player account from the sign-in screen.
 
-The seed command adds five quizzes with ten questions each: three about baseball and two about Rainbow Six Siege. It does not overwrite existing question sets. It archives the original general-knowledge sample quizzes without deleting their questions or attempt history. Regular registration always creates a player account.
+The seed command adds nine quizzes with ten questions each: five about baseball and four about Rainbow Six Siege. The newest sets cover advanced rules, stats, map control, and team coordination. Seeding does not overwrite existing question sets. It archives the original general-knowledge sample quizzes without deleting their questions or attempt history. Regular registration always creates a player account.
 
 Password recovery sends a single-use link through the connected Resend integration. Set `RESEND_FROM_EMAIL` to an address on a verified Resend sending domain. Development links use Replit's development domain; set `APP_BASE_URL` to the published HTTPS URL for production.
 
@@ -26,7 +26,7 @@ Run `npm test` in the development environment. Tests use `DATABASE_URL` to creat
 
 - Player registration, sign-in, sign-out, and profile/password updates.
 - Hashed passwords and signed, HTTP-only, seven-day sliding session cookies.
-- Five seeded quizzes, each with ten questions; timed quizzes use server-side elapsed-time enforcement.
+- Nine seeded quizzes, each with ten questions; timed quizzes use server-side elapsed-time enforcement.
 - Saved completed, in-progress, and abandoned attempts; score review, history, and retry.
 - Overall and per-quiz leaderboards with deterministic tie-breaking.
 - Admin quiz/question management, question visibility controls, validated CSV preview/import, user role/access management, and analytics.
