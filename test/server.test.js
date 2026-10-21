@@ -324,3 +324,47 @@ test("keeps question ordering contiguous and supports reassignment between quizz
   });
   assert.equal(invalidDestination.response.status, 404);
 });
+
+test("limits repeated failed sign-ins per identity instead of per shared IP", async () => {
+  const lockedUser = await registerUser();
+  const otherUser = await registerUser();
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const failed = await request(null, "/api/auth/login", {
+      method: "POST",
+      body: { identity: lockedUser.username, password: "WrongPassword!123" }
+    });
+    assert.equal(failed.response.status, 401);
+  }
+
+  const blockedIdentity = await request(null, "/api/auth/login", {
+    method: "POST",
+    body: { identity: lockedUser.email, password: "LongEnough!123" }
+  });
+  assert.equal(blockedIdentity.response.status, 429);
+
+  const otherIdentity = await request(null, "/api/auth/login", {
+    method: "POST",
+    body: { identity: otherUser.username, password: "LongEnough!123" }
+  });
+  assert.equal(otherIdentity.response.status, 200);
+
+  const recoveredUser = await registerUser();
+  const failedBeforeSuccess = await request(null, "/api/auth/login", {
+    method: "POST",
+    body: { identity: recoveredUser.username, password: "WrongPassword!123" }
+  });
+  assert.equal(failedBeforeSuccess.response.status, 401);
+  const successfulLogin = await request(null, "/api/auth/login", {
+    method: "POST",
+    body: { identity: recoveredUser.email, password: "LongEnough!123" }
+  });
+  assert.equal(successfulLogin.response.status, 200);
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const failedAfterSuccess = await request(null, "/api/auth/login", {
+      method: "POST",
+      body: { identity: recoveredUser.email, password: "WrongPassword!123" }
+    });
+    assert.equal(failedAfterSuccess.response.status, 401);
+  }
+});

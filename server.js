@@ -11,7 +11,9 @@ const SESSION_SECRET = process.env.SESSION_SECRET;
 const COOKIE_NAME = "quiz_session";
 const SESSION_AGE = 7 * 24 * 60 * 60 * 1000;
 const importPreviews = new Map();
-const loginWindows = new Map();
+const loginFailures = new Map();
+const LOGIN_FAILURE_LIMIT = 10;
+const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 
 if (!SESSION_SECRET) {
   throw new Error("SESSION_SECRET is required. Add it to the Replit Secrets tool.");
@@ -87,6 +89,19 @@ function requireAdmin(req, res, next) {
 
 function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+}
+
+function loginFailureKey(identity, user) {
+  const value = user ? `user:${user.id}` : `identity:${String(identity || "").trim().toLowerCase()}`;
+  return crypto.createHmac("sha256", SESSION_SECRET)
+    .update(value)
+    .digest("hex");
+}
+
+function pruneLoginFailures(now) {
+  for (const [key, window] of loginFailures) {
+    if (window.until <= now) loginFailures.delete(key);
+  }
 }
 
 function normalizeChoice(choice) {
@@ -225,23 +240,27 @@ app.post("/api/auth/register", asyncRoute(async (req, res) => {
 }));
 
 app.post("/api/auth/login", asyncRoute(async (req, res) => {
-  const address = req.ip || "unknown";
-  const now = Date.now();
-  const window = loginWindows.get(address);
-  if (window && window.until > now && window.count >= 12) return res.status(429).json({ error: "Too many sign-in attempts. Try again in a few minutes." });
-  if (!window || window.until <= now) loginWindows.set(address, { count: 1, until: now + 10 * 60 * 1000 });
-  else window.count++;
-
   const identity = String(req.body.identity || "").trim();
   const result = await pool.query(
     "SELECT id, username, email, role, disabled, password_hash FROM users WHERE lower(username) = lower($1) OR lower(email) = lower($1)",
     [identity]
   );
   const user = result.rows[0];
+  const key = loginFailureKey(identity, user);
+  const now = Date.now();
+  pruneLoginFailures(now);
+  const window = loginFailures.get(key);
+  if (window && window.count >= LOGIN_FAILURE_LIMIT) {
+    const waitMinutes = Math.max(1, Math.ceil((window.until - now) / 60_000));
+    return res.status(429).json({ error: `Too many unsuccessful sign-in attempts for this username or email. Try again in ${waitMinutes} minute${waitMinutes === 1 ? "" : "s"}.` });
+  }
+
   if (!user || user.disabled || !(await bcrypt.compare(String(req.body.password || ""), user.password_hash))) {
+    if (window && window.until > now) window.count++;
+    else loginFailures.set(key, { count: 1, until: now + LOGIN_WINDOW_MS });
     return res.status(401).json({ error: "The username/email or password is incorrect." });
   }
-  loginWindows.delete(address);
+  loginFailures.delete(key);
   issueSession(res, user.id);
   res.json({ user: { id: user.id, username: user.username, email: user.email, role: user.role } });
 }));

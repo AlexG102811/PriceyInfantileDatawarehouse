@@ -598,6 +598,15 @@ async function handleSubmit(event) {
   clearFormErrors(form);
 
   if (form.id === "auth-form") {
+    if (form.dataset.submitting === "true") return;
+    form.dataset.submitting = "true";
+    const submitButton = form.querySelector('button[type="submit"]');
+    const originalButtonMarkup = submitButton?.innerHTML;
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.setAttribute("aria-busy", "true");
+      submitButton.textContent = form.dataset.mode === "register" ? "Creating account…" : "Signing in…";
+    }
     const values = formValues(form);
     try {
       const endpoint = form.dataset.mode === "register" ? "/api/auth/register" : "/api/auth/login";
@@ -607,6 +616,13 @@ async function handleSubmit(event) {
       await navigate("home");
     } catch (error) {
       document.querySelector("#auth-error").innerHTML = `<div class="alert">${escapeHtml(error.message)}</div>`;
+    } finally {
+      form.dataset.submitting = "false";
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.removeAttribute("aria-busy");
+        submitButton.innerHTML = originalButtonMarkup;
+      }
     }
     return;
   }
