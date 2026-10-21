@@ -3,8 +3,10 @@ const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const crypto = require("node:crypto");
 const path = require("node:path");
+const { sendPasswordResetEmail } = require("./lib/password-reset-email");
 
 const app = express();
+app.locals.sendPasswordResetEmail = sendPasswordResetEmail;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const PORT = Number(process.env.PORT) || 5000;
 const SESSION_SECRET = process.env.SESSION_SECRET;
@@ -12,8 +14,13 @@ const COOKIE_NAME = "quiz_session";
 const SESSION_AGE = 7 * 24 * 60 * 60 * 1000;
 const importPreviews = new Map();
 const loginFailures = new Map();
+const passwordResetRequests = new Map();
 const LOGIN_FAILURE_LIMIT = 10;
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
+const PASSWORD_RESET_REQUEST_LIMIT = 3;
+const PASSWORD_RESET_REQUEST_WINDOW_MS = 60 * 60 * 1000;
+const PASSWORD_RESET_TOKEN_AGE_MS = 30 * 60 * 1000;
+const PASSWORD_RESET_MESSAGE = "If an account exists for that email, a password reset link will be sent shortly.";
 
 if (!SESSION_SECRET) {
   throw new Error("SESSION_SECRET is required. Add it to the Replit Secrets tool.");
@@ -37,8 +44,8 @@ function sign(value) {
   return crypto.createHmac("sha256", SESSION_SECRET).update(value).digest("base64url");
 }
 
-function issueSession(res, userId) {
-  const encoded = Buffer.from(JSON.stringify({ userId, expiresAt: Date.now() + SESSION_AGE })).toString("base64url");
+function issueSession(res, userId, sessionVersion = 0) {
+  const encoded = Buffer.from(JSON.stringify({ userId, sessionVersion, expiresAt: Date.now() + SESSION_AGE })).toString("base64url");
   const value = `${encoded}.${sign(encoded)}`;
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
   res.setHeader("Set-Cookie", `${COOKIE_NAME}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_AGE / 1000)}${secure}`);
@@ -66,7 +73,7 @@ async function requireAuth(req, res, next) {
       return res.status(401).json({ error: "Your session has expired. Please sign in again." });
     }
     const result = await pool.query(
-      "SELECT id, username, email, role, disabled, joined_at FROM users WHERE id = $1",
+      "SELECT id, username, email, role, disabled, joined_at, session_version AS \"sessionVersion\" FROM users WHERE id = $1",
       [session.userId]
     );
     const user = result.rows[0];
@@ -74,8 +81,12 @@ async function requireAuth(req, res, next) {
       clearSession(res);
       return res.status(401).json({ error: "This account is unavailable. Please sign in again." });
     }
+    if ((session.sessionVersion ?? 0) !== user.sessionVersion) {
+      clearSession(res);
+      return res.status(401).json({ error: "Your session has expired. Please sign in again." });
+    }
     req.user = user;
-    issueSession(res, user.id);
+    issueSession(res, user.id, user.sessionVersion);
     next();
   } catch (error) {
     next(error);
@@ -102,6 +113,41 @@ function pruneLoginFailures(now) {
   for (const [key, window] of loginFailures) {
     if (window.until <= now) loginFailures.delete(key);
   }
+}
+
+function passwordResetRequestKey(email) {
+  return crypto.createHmac("sha256", SESSION_SECRET).update(`password-reset:${email}`).digest("hex");
+}
+
+function allowPasswordResetRequest(email, now) {
+  for (const [key, window] of passwordResetRequests) {
+    if (window.until <= now) passwordResetRequests.delete(key);
+  }
+  const key = passwordResetRequestKey(email);
+  const window = passwordResetRequests.get(key);
+  if (window && window.count >= PASSWORD_RESET_REQUEST_LIMIT) return false;
+  if (window) window.count++;
+  else passwordResetRequests.set(key, { count: 1, until: now + PASSWORD_RESET_REQUEST_WINDOW_MS });
+  return true;
+}
+
+function passwordResetUrl(token) {
+  let baseUrl = app.locals.publicAppBaseUrl || process.env.APP_BASE_URL;
+  if (!baseUrl && process.env.NODE_ENV !== "production" && process.env.REPLIT_DEV_DOMAIN) {
+    baseUrl = `https://${process.env.REPLIT_DEV_DOMAIN}`;
+  }
+  if (!baseUrl) throw new Error("APP_BASE_URL is required to build password reset links.");
+  const url = new URL(baseUrl);
+  const localHttp = process.env.NODE_ENV !== "production"
+    && ["localhost", "127.0.0.1"].includes(url.hostname)
+    && url.protocol === "http:";
+  if (url.protocol !== "https:" && !localHttp) {
+    throw new Error("APP_BASE_URL must use HTTPS.");
+  }
+  url.pathname = "/";
+  url.search = "";
+  url.hash = new URLSearchParams({ reset: token }).toString();
+  return url.toString();
 }
 
 function normalizeChoice(choice) {
@@ -242,7 +288,7 @@ app.post("/api/auth/register", asyncRoute(async (req, res) => {
 app.post("/api/auth/login", asyncRoute(async (req, res) => {
   const identity = String(req.body.identity || "").trim();
   const result = await pool.query(
-    "SELECT id, username, email, role, disabled, password_hash FROM users WHERE lower(username) = lower($1) OR lower(email) = lower($1)",
+    "SELECT id, username, email, role, disabled, password_hash, session_version AS \"sessionVersion\" FROM users WHERE lower(username) = lower($1) OR lower(email) = lower($1)",
     [identity]
   );
   const user = result.rows[0];
@@ -261,8 +307,92 @@ app.post("/api/auth/login", asyncRoute(async (req, res) => {
     return res.status(401).json({ error: "The username/email or password is incorrect." });
   }
   loginFailures.delete(key);
-  issueSession(res, user.id);
+  issueSession(res, user.id, user.sessionVersion);
   res.json({ user: { id: user.id, username: user.username, email: user.email, role: user.role } });
+}));
+
+app.post("/api/auth/password-reset/request", asyncRoute(async (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const now = Date.now();
+  const validEmail = email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  if (!validEmail || !allowPasswordResetRequest(email, now)) {
+    return res.status(202).json({ message: PASSWORD_RESET_MESSAGE });
+  }
+
+  const result = await pool.query(
+    "SELECT id, email FROM users WHERE lower(email) = $1 AND disabled = FALSE",
+    [email]
+  );
+  const user = result.rows[0];
+  if (user) {
+    const token = crypto.randomBytes(32).toString("base64url");
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    await pool.query("DELETE FROM password_reset_tokens WHERE user_id = $1", [user.id]);
+    await pool.query(
+      "INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
+      [user.id, tokenHash, new Date(now + PASSWORD_RESET_TOKEN_AGE_MS)]
+    );
+
+    try {
+      const resetUrl = passwordResetUrl(token);
+      await app.locals.sendPasswordResetEmail({ to: user.email, resetUrl });
+    } catch (error) {
+      await pool.query("DELETE FROM password_reset_tokens WHERE token_hash = $1", [tokenHash]).catch(() => {});
+      console.error("Password reset email delivery failed:", error.name || "Error");
+    }
+  }
+
+  res.status(202).json({ message: PASSWORD_RESET_MESSAGE });
+}));
+
+app.post("/api/auth/password-reset/confirm", asyncRoute(async (req, res) => {
+  const token = String(req.body.token || "");
+  const password = String(req.body.password || "");
+  if (password.length < 10 || password.length > 128) {
+    return res.status(400).json({ error: "Password must be 10–128 characters." });
+  }
+  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) {
+    return res.status(400).json({ error: "This reset link is invalid or expired. Request a new one." });
+  }
+
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const passwordHash = await bcrypt.hash(password, 12);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const reset = await client.query(
+      `SELECT user_id FROM password_reset_tokens
+       WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+       FOR UPDATE`,
+      [tokenHash]
+    );
+    if (!reset.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "This reset link is invalid or expired. Request a new one." });
+    }
+
+    const userId = reset.rows[0].user_id;
+    const updated = await client.query(
+      "UPDATE users SET password_hash = $1, session_version = session_version + 1 WHERE id = $2 AND disabled = FALSE RETURNING id",
+      [passwordHash, userId]
+    );
+    if (!updated.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "This reset link is invalid or expired. Request a new one." });
+    }
+    await client.query(
+      "UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL",
+      [userId]
+    );
+    await client.query("COMMIT");
+    clearSession(res);
+    res.json({ message: "Your password has been reset. Sign in with your new password." });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }));
 
 app.post("/api/auth/logout", (req, res) => {
@@ -511,11 +641,13 @@ app.patch("/api/me", requireAuth, asyncRoute(async (req, res) => {
       const current = await pool.query("SELECT password_hash FROM users WHERE id = $1", [req.user.id]);
       if (!(await bcrypt.compare(String(req.body.currentPassword || ""), current.rows[0].password_hash))) return res.status(403).json({ error: "Current password is incorrect." });
       const hash = await bcrypt.hash(String(req.body.newPassword), 12);
-      await pool.query("UPDATE users SET username = $1, email = $2, password_hash = $3 WHERE id = $4", [username, email, hash, req.user.id]);
+      await pool.query("UPDATE users SET username = $1, email = $2, password_hash = $3, session_version = session_version + 1 WHERE id = $4", [username, email, hash, req.user.id]);
     } else {
       await pool.query("UPDATE users SET username = $1, email = $2 WHERE id = $3", [username, email, req.user.id]);
     }
-    const user = await pool.query("SELECT id, username, email, role, joined_at AS \"joinedAt\" FROM users WHERE id = $1", [req.user.id]);
+    const user = await pool.query("SELECT id, username, email, role, joined_at AS \"joinedAt\", session_version AS \"sessionVersion\" FROM users WHERE id = $1", [req.user.id]);
+    issueSession(res, user.rows[0].id, user.rows[0].sessionVersion);
+    delete user.rows[0].sessionVersion;
     res.json({ user: user.rows[0] });
   } catch (error) {
     if (error.code === "23505") return res.status(409).json({ error: "That username or email is already in use." });

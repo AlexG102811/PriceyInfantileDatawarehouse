@@ -10,6 +10,18 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (lower(username));
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_idx ON users (lower(email));
+ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  used_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS password_reset_tokens_user_idx ON password_reset_tokens(user_id, expires_at);
 
 CREATE TABLE IF NOT EXISTS quizzes (
   id SERIAL PRIMARY KEY,

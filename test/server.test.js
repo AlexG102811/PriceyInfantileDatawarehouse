@@ -6,6 +6,7 @@ const { Pool } = require("pg");
 
 let adminPool;
 let appPool;
+let app;
 let httpServer;
 let baseUrl;
 let schema;
@@ -119,7 +120,9 @@ before(async () => {
   await schemaPool.query(schemaSql);
   await schemaPool.end();
 
-  const { app, pool } = require("../server");
+  const server = require("../server");
+  app = server.app;
+  const { pool } = server;
   appPool = pool;
   httpServer = app.listen(0, "127.0.0.1");
   await new Promise((resolve, reject) => {
@@ -366,5 +369,80 @@ test("limits repeated failed sign-ins per identity instead of per shared IP", as
       body: { identity: recoveredUser.email, password: "WrongPassword!123" }
     });
     assert.equal(failedAfterSuccess.response.status, 401);
+  }
+});
+
+test("sends single-use password reset links and invalidates old sessions", async () => {
+  const player = await registerUser();
+  const oldCookie = player.cookie;
+  const originalSender = app.locals.sendPasswordResetEmail;
+  const originalBaseUrl = app.locals.publicAppBaseUrl;
+  const sentEmails = [];
+  app.locals.publicAppBaseUrl = "https://quiz.example.test";
+  app.locals.sendPasswordResetEmail = async (email) => sentEmails.push(email);
+
+  try {
+    const unknownEmail = await request(null, "/api/auth/password-reset/request", {
+      method: "POST",
+      body: { email: "unknown@example.test" }
+    });
+    const knownEmail = await request(null, "/api/auth/password-reset/request", {
+      method: "POST",
+      body: { email: player.email }
+    });
+    assert.equal(unknownEmail.response.status, 202);
+    assert.equal(knownEmail.response.status, 202);
+    assert.deepEqual(knownEmail.data, unknownEmail.data);
+    assert.equal(sentEmails.length, 1);
+    assert.equal(sentEmails[0].to, player.email);
+
+    const firstUrl = new URL(sentEmails[0].resetUrl);
+    assert.equal(firstUrl.origin, "https://quiz.example.test");
+    const firstToken = new URLSearchParams(firstUrl.hash.slice(1)).get("reset");
+    assert.match(firstToken, /^[A-Za-z0-9_-]{43}$/);
+    const stored = await appPool.query(
+      "SELECT token_hash, expires_at FROM password_reset_tokens WHERE user_id = $1",
+      [player.id]
+    );
+    assert.equal(stored.rows.length, 1);
+    assert.notEqual(stored.rows[0].token_hash, firstToken);
+    assert.ok(stored.rows[0].expires_at > new Date());
+
+    const reset = await request(null, "/api/auth/password-reset/confirm", {
+      method: "POST",
+      body: { token: firstToken, password: "NewSecurePassword!456" }
+    });
+    assert.equal(reset.response.status, 200);
+    assert.equal((await request({ cookie: oldCookie }, "/api/me/attempts")).response.status, 401);
+    assert.equal((await request(null, "/api/auth/login", {
+      method: "POST",
+      body: { identity: player.username, password: "LongEnough!123" }
+    })).response.status, 401);
+    assert.equal((await request(null, "/api/auth/login", {
+      method: "POST",
+      body: { identity: player.username, password: "NewSecurePassword!456" }
+    })).response.status, 200);
+    assert.equal((await request(null, "/api/auth/password-reset/confirm", {
+      method: "POST",
+      body: { token: firstToken, password: "AnotherSecurePassword!789" }
+    })).response.status, 400);
+
+    await request(null, "/api/auth/password-reset/request", {
+      method: "POST",
+      body: { email: player.email }
+    });
+    const secondToken = new URLSearchParams(new URL(sentEmails[1].resetUrl).hash.slice(1)).get("reset");
+    await appPool.query(
+      "UPDATE password_reset_tokens SET expires_at = NOW() - INTERVAL '1 second' WHERE user_id = $1",
+      [player.id]
+    );
+    const expired = await request(null, "/api/auth/password-reset/confirm", {
+      method: "POST",
+      body: { token: secondToken, password: "AnotherSecurePassword!789" }
+    });
+    assert.equal(expired.response.status, 400);
+  } finally {
+    app.locals.sendPasswordResetEmail = originalSender;
+    app.locals.publicAppBaseUrl = originalBaseUrl;
   }
 });

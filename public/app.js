@@ -2,6 +2,8 @@ const state = {
   user: null,
   view: "home",
   authMode: "login",
+  authNotice: "",
+  resetToken: "",
   quizzes: [],
   attempts: [],
   boardMode: "overall",
@@ -405,16 +407,38 @@ function resultsPage() {
 
 function authPage() {
   const register = state.authMode === "register";
+  const forgot = state.authMode === "forgot";
+  const reset = state.authMode === "reset";
+  const title = reset ? "Choose a new password" : forgot ? "Reset your password" : register ? "Make yourself at home" : "Welcome back";
+  const description = reset
+    ? "Use a new password to get back to your quizzes."
+    : forgot
+      ? "Enter the email address on your player account and we’ll send a reset link."
+      : register
+        ? "Create your player account and pick your first quiz."
+        : "Sign in to see your quizzes and pick up where you left off.";
+  const fields = reset
+    ? `<div class="field"><label for="reset-password">New password</label><input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required placeholder="At least 10 characters"></div>
+       <div class="field"><label for="reset-password-confirm">Confirm new password</label><input id="reset-password-confirm" name="confirmPassword" type="password" autocomplete="new-password" minlength="10" maxlength="128" required placeholder="Enter it again"></div>`
+    : forgot
+      ? `<div class="field"><label for="reset-email">Email address</label><input id="reset-email" name="email" type="email" autocomplete="email" maxlength="254" required placeholder="you@example.com"></div>`
+      : `${register ? `<div class="field"><label for="auth-username">Username</label><input id="auth-username" name="username" autocomplete="username" minlength="3" maxlength="24" required placeholder="Your player name"><span class="field-hint">3–24 letters, numbers, dashes, or underscores.</span></div>` : `<div class="field"><label for="auth-identity">Username or email</label><input id="auth-identity" name="identity" autocomplete="username" required placeholder="Your username or email"></div>`}
+         ${register ? `<div class="field"><label for="auth-email">Email address</label><input id="auth-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com"></div>` : ""}
+         <div class="field"><label for="auth-password">Password</label><input id="auth-password" name="password" type="password" autocomplete="${register ? "new-password" : "current-password"}" minlength="${register ? "10" : "1"}" required placeholder="${register ? "At least 10 characters" : "Your password"}"></div>`;
+  const submitLabel = reset ? "Save new password" : forgot ? "Send reset link" : register ? "Create account" : "Sign in";
   return `<main class="auth-page"><section class="auth-side"><a class="brand" href="#"><span class="brand-mark">B</span> Brightside</a>
     <div class="auth-copy"><p class="eyebrow">Curiosity looks good on you</p><h1>A little quiz. A lot to learn.</h1><p>Pick a topic, take a few minutes, and see where your curiosity takes you.</p></div><p class="auth-foot">A friendly place to test what you know — and find out what you don’t.</p></section>
-    <section class="auth-main"><div class="auth-box"><span class="brand-mark">B</span><h2>${register ? "Make yourself at home" : "Welcome back"}</h2><p>${register ? "Create your player account and pick your first quiz." : "Sign in to see your quizzes and pick up where you left off."}</p>
-      <div class="auth-switch"><button class="${!register ? "active" : ""}" data-action="auth-mode" data-mode="login">Sign in</button><button class="${register ? "active" : ""}" data-action="auth-mode" data-mode="register">Create account</button></div>
-      <div id="auth-error" aria-live="polite"></div><form class="auth-form" id="auth-form" data-mode="${state.authMode}">
-        ${register ? `<div class="field"><label for="auth-username">Username</label><input id="auth-username" name="username" autocomplete="username" minlength="3" maxlength="24" required placeholder="Your player name"><span class="field-hint">3–24 letters, numbers, dashes, or underscores.</span></div>` : `<div class="field"><label for="auth-identity">Username or email</label><input id="auth-identity" name="identity" autocomplete="username" required placeholder="Your username or email"></div>`}
-        ${register ? `<div class="field"><label for="auth-email">Email address</label><input id="auth-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com"></div>` : ""}
-        <div class="field"><label for="auth-password">Password</label><input id="auth-password" name="password" type="password" autocomplete="${register ? "new-password" : "current-password"}" minlength="${register ? "10" : "1"}" required placeholder="${register ? "At least 10 characters" : "Your password"}"></div>
-        <button class="button" type="submit">${register ? "Create account" : "Sign in"} <span>→</span></button>
-      </form><p class="field-hint" style="margin-top:16px">Your password is securely hashed and never stored as plain text.</p>
+    <section class="auth-main"><div class="auth-box"><span class="brand-mark">B</span><h2>${title}</h2><p>${description}</p>
+      ${forgot || reset
+        ? `<button class="button quiet" type="button" data-action="auth-mode" data-mode="login">← Back to sign in</button>`
+        : `<div class="auth-switch"><button class="${!register ? "active" : ""}" data-action="auth-mode" data-mode="login">Sign in</button><button class="${register ? "active" : ""}" data-action="auth-mode" data-mode="register">Create account</button></div>`}
+      <div id="auth-error" aria-live="polite">${state.authNotice ? `<div class="alert info">${escapeHtml(state.authNotice)}</div>` : ""}</div>
+      <form class="auth-form" id="auth-form" data-mode="${state.authMode}">
+        ${fields}
+        <button class="button" type="submit">${submitLabel} <span>→</span></button>
+      </form>
+      ${!register && !forgot && !reset ? `<button class="button quiet" type="button" data-action="auth-mode" data-mode="forgot">Forgot password?</button>` : ""}
+      ${!forgot && !reset ? `<p class="field-hint" style="margin-top:16px">Your password is securely hashed and never stored as plain text.</p>` : ""}
     </div></section></main>`;
 }
 
@@ -602,20 +626,39 @@ async function handleSubmit(event) {
     form.dataset.submitting = "true";
     const submitButton = form.querySelector('button[type="submit"]');
     const originalButtonMarkup = submitButton?.innerHTML;
+    const mode = form.dataset.mode;
     if (submitButton) {
       submitButton.disabled = true;
       submitButton.setAttribute("aria-busy", "true");
-      submitButton.textContent = form.dataset.mode === "register" ? "Creating account…" : "Signing in…";
+      submitButton.textContent = mode === "register" ? "Creating account…" : mode === "forgot" ? "Sending link…" : mode === "reset" ? "Saving password…" : "Signing in…";
     }
     const values = formValues(form);
     try {
-      const endpoint = form.dataset.mode === "register" ? "/api/auth/register" : "/api/auth/login";
-      const result = await api(endpoint, { method: "POST", body: JSON.stringify(values) });
-      state.user = result.user;
-      state.view = "home";
-      await navigate("home");
+      if (mode === "forgot") {
+        const result = await api("/api/auth/password-reset/request", { method: "POST", body: JSON.stringify(values) });
+        state.authNotice = result.message;
+        render();
+      } else if (mode === "reset") {
+        if (values.password !== values.confirmPassword) throw new Error("The passwords do not match.");
+        const result = await api("/api/auth/password-reset/confirm", {
+          method: "POST",
+          body: JSON.stringify({ token: state.resetToken, password: values.password })
+        });
+        state.authMode = "login";
+        state.resetToken = "";
+        state.authNotice = result.message;
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+        render();
+      } else {
+        const endpoint = mode === "register" ? "/api/auth/register" : "/api/auth/login";
+        const result = await api(endpoint, { method: "POST", body: JSON.stringify(values) });
+        state.user = result.user;
+        state.view = "home";
+        await navigate("home");
+      }
     } catch (error) {
-      document.querySelector("#auth-error").innerHTML = `<div class="alert">${escapeHtml(error.message)}</div>`;
+      const errorRegion = document.querySelector("#auth-error");
+      if (errorRegion) errorRegion.innerHTML = `<div class="alert">${escapeHtml(error.message)}</div>`;
     } finally {
       form.dataset.submitting = "false";
       if (submitButton) {
@@ -711,7 +754,12 @@ async function actionClick(action, button) {
     state.view = "home";
     render();
   } else if (action === "auth-mode") {
+    if (state.authMode === "reset") {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+      state.resetToken = "";
+    }
     state.authMode = button.dataset.mode;
+    state.authNotice = "";
     render();
   } else if (action === "start-quiz" || action === "retry-quiz") {
     await startQuiz(Number(id));
@@ -949,6 +997,13 @@ document.addEventListener("keydown", (event) => {
 });
 
 async function boot() {
+  const resetToken = new URLSearchParams(window.location.hash.slice(1)).get("reset");
+  if (resetToken) {
+    state.authMode = "reset";
+    state.resetToken = resetToken;
+    render();
+    return;
+  }
   try {
     await loadProfile();
     if (state.user) await navigate("home");

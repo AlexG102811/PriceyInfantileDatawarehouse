@@ -13,6 +13,8 @@ Replit provides `DATABASE_URL` and `SESSION_SECRET` in the project environment. 
 
 The seed command adds five quizzes with ten questions each: three about baseball and two about Rainbow Six Siege. It does not overwrite existing question sets. It archives the original general-knowledge sample quizzes without deleting their questions or attempt history. Regular registration always creates a player account.
 
+Password recovery sends a single-use link through the connected Resend integration. Set `RESEND_FROM_EMAIL` to an address on a verified Resend sending domain. Development links use Replit's development domain; set `APP_BASE_URL` to the published HTTPS URL for production.
+
 For production, publish the development schema through Replit's Publish flow. Do not run the development setup command against a production database. Seed production content and the initial admin separately using that environment's approved database workflow.
 
 
