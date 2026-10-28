@@ -29,6 +29,7 @@ Run `npm test` in the development environment. Tests use `DATABASE_URL` to creat
 - Nine seeded quizzes, each with ten questions; timed quizzes use server-side elapsed-time enforcement.
 - Saved completed, in-progress, and abandoned attempts; score review, history, and retry.
 - Overall and per-quiz leaderboards with deterministic tie-breaking.
+- Siege-style ranked progression from Copper through Champion; quiz score and difficulty update ranked points.
 - Admin quiz/question management, question visibility controls, validated CSV preview/import, user role/access management, and analytics.
 
 ## CSV template

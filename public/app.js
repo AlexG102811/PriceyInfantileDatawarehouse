@@ -31,6 +31,8 @@ const state = {
 const appRoot = document.querySelector("#app");
 const difficultyNames = { easy: "Easy", easy_medium: "Easy–medium", medium: "Medium", hard: "Hard", expert: "Expert" };
 const topicIcons = { Science: "✳", "World History": "⌛", Geography: "⌖", Literature: "Aa", Technology: "⌘" };
+const rankTiers = ["Copper", "Bronze", "Silver", "Gold", "Platinum", "Emerald", "Diamond", "Champion"];
+const rankDivisions = ["V", "IV", "III", "II", "I"];
 let pendingSaves = Promise.resolve();
 let questionShownAt = Date.now();
 let timerInterval = null;
@@ -53,6 +55,33 @@ function fmtDuration(start, finish) {
   const seconds = Math.max(0, Math.round((new Date(finish) - new Date(start)) / 1000));
   const mins = Math.floor(seconds / 60);
   return mins ? `${mins}m ${seconds % 60}s` : `${seconds}s`;
+}
+
+function rankDetails(value) {
+  const points = Math.max(0, Math.floor(Number(value) || 0));
+  const tierIndex = Math.floor(points / 200);
+  if (tierIndex >= rankTiers.length - 1) {
+    return { label: "Champion", points, progress: null, next: null };
+  }
+  const inTier = points % 200;
+  const divisionIndex = Math.floor(inTier / 40);
+  const divisionProgress = inTier % 40;
+  return {
+    label: `${rankTiers[tierIndex]} ${rankDivisions[divisionIndex]}`,
+    points,
+    progress: Math.round(divisionProgress / 40 * 100),
+    next: 40 - divisionProgress
+  };
+}
+
+function rankCard(value, compact = false) {
+  const rank = rankDetails(value);
+  return `<section class="rank-card${compact ? " compact" : ""}">
+    <div class="rank-emblem" aria-hidden="true">✦</div>
+    <div class="rank-copy"><p class="eyebrow">Siege-style ranked</p><h2>${rank.label}</h2><p>${rank.points} RP${rank.next == null ? " · Highest tier" : ` · ${rank.next} RP to next division`}</p>
+      ${rank.progress == null ? `<div class="rank-progress" role="img" aria-label="Champion rank achieved"><span style="width:100%"></span></div>` : `<div class="rank-progress" role="img" aria-label="${rank.progress}% to next division"><span style="width:${rank.progress}%"></span></div>`}
+    </div>
+  </section>`;
 }
 
 async function api(url, options = {}) {
@@ -134,6 +163,7 @@ function homePage() {
       <h1>Hey ${escapeHtml(state.user.username)}, ready to surprise yourself?</h1>
       <p>Pick a topic, trust what you know, and learn something new along the way. Your next tiny victory is just a few questions away.</p>${action}
     </div><div class="welcome-art" aria-hidden="true"><span>?</span></div></section>
+    ${rankCard(state.user.rankedPoints)}
     <section class="stats-grid">
       <div class="card stat-card"><p class="stat-label">Quizzes completed</p><p class="stat-value">${completed.length}</p><p class="stat-note">Every attempt counts</p></div>
       <div class="card stat-card"><p class="stat-label">Personal best</p><p class="stat-value">${best == null ? "—" : `${best}%`}</p><p class="stat-note">Across completed quizzes</p></div>
@@ -153,19 +183,22 @@ function quizzesPage() {
 function leaderboardTable(entries, kind, me) {
   if (!entries?.length) return `<div class="card empty"><div class="empty-icon">♙</div><h3>You're early to the leaderboard</h3><p>Finish a quiz to earn your first spot here.</p><button class="button" data-view="quizzes">Browse quizzes</button></div>`;
   const isQuiz = kind === "quiz";
+  const isRanked = kind === "ranked";
   return `<div class="card table-card"><div class="table-scroll"><table class="mobile-stack">
-    <thead><tr><th>Rank</th><th>Player</th>${isQuiz ? "<th>Best score</th><th>Attempts</th><th>Achieved</th>" : "<th>Completed attempts</th><th>Quizzes played</th><th>Member since</th>"}</tr></thead>
+    <thead><tr><th>Rank</th><th>Player</th>${isRanked ? "<th>Siege rank</th><th>Ranked points</th>" : isQuiz ? "<th>Best score</th><th>Attempts</th><th>Achieved</th>" : "<th>Completed attempts</th><th>Quizzes played</th><th>Member since</th>"}</tr></thead>
     <tbody>${entries.map((entry, index) => {
       const rank = Number(entry.rank);
       const medal = rank === 1 ? "gold" : rank === 2 ? "silver" : rank === 3 ? "bronze" : "";
       return `<tr><td data-label="Rank"><span class="rank ${medal}">${rank}</span></td>
         <td data-label="Player"><span class="user-cell"><span class="avatar">${initials(entry.username)}</span>${escapeHtml(entry.username)}${entry.id === state.user.id ? `<span class="you-tag">You</span>` : ""}</span></td>
-        ${isQuiz
+        ${isRanked
+          ? `<td data-label="Siege rank"><span class="rank-label">${escapeHtml(entry.rankInfo.label)}</span></td><td data-label="Ranked points"><strong>${entry.rankedPoints}</strong> RP</td>`
+          : isQuiz
           ? `<td data-label="Best score"><strong>${entry.bestPoints}</strong> pts <span class="muted">· ${Math.round(entry.bestPoints * 100 / (state.selectedQuiz?.questionCount || 10))}%</span></td><td data-label="Attempts">${entry.attempts}</td><td data-label="Achieved">${fmtDate(entry.bestAchievedAt)}</td>`
           : `<td data-label="Completed attempts"><strong>${entry.totalAttempts}</strong></td><td data-label="Quizzes played">${entry.quizzesPlayed}</td><td data-label="Member since">${fmtDate(entry.joinedAt)}</td>`}
       </tr>`;
     }).join("")}</tbody></table></div></div>
-    ${me && !entries.some((entry) => entry.id === state.user.id) ? `<div class="alert info" style="margin-top:14px;margin-bottom:0">Your best: <strong>#${me.rank}</strong> · ${isQuiz ? `${me.bestPoints} points in ${me.attempts} attempts` : `${me.totalAttempts} completed attempts`}</div>` : ""}`;
+    ${me && !entries.some((entry) => entry.id === state.user.id) ? `<div class="alert info" style="margin-top:14px;margin-bottom:0">Your best: <strong>#${me.rank}</strong> · ${isRanked ? `${escapeHtml(me.rankInfo.label)} · ${me.rankedPoints} RP` : isQuiz ? `${me.bestPoints} points in ${me.attempts} attempts` : `${me.totalAttempts} completed attempts`}</div>` : ""}`;
 }
 
 async function leaderboardPage() {
@@ -173,6 +206,10 @@ async function leaderboardPage() {
   let me = null;
   if (state.boardMode === "overall") {
     const data = await api("/api/leaderboard/overall");
+    entries = data.entries;
+    me = data.me;
+  } else if (state.boardMode === "ranked") {
+    const data = await api("/api/leaderboard/ranked");
     entries = data.entries;
     me = data.me;
   } else {
@@ -187,9 +224,12 @@ async function leaderboardPage() {
     me = data.me;
     state.selectedQuiz = quizInfo.quiz;
   }
-  const controls = `<div class="board-controls"><div class="tabs"><button class="tab${state.boardMode === "overall" ? " active" : ""}" data-action="board-mode" data-mode="overall">Overall</button><button class="tab${state.boardMode === "quiz" ? " active" : ""}" data-action="board-mode" data-mode="quiz">By quiz</button></div>
+  const controls = `<div class="board-controls"><div class="tabs"><button class="tab${state.boardMode === "overall" ? " active" : ""}" data-action="board-mode" data-mode="overall">Overall</button><button class="tab${state.boardMode === "ranked" ? " active" : ""}" data-action="board-mode" data-mode="ranked">Ranked</button><button class="tab${state.boardMode === "quiz" ? " active" : ""}" data-action="board-mode" data-mode="quiz">By quiz</button></div>
     ${state.boardMode === "quiz" ? `<select class="select" id="board-quiz" aria-label="Choose a quiz">${state.quizzes.map((quiz) => `<option value="${quiz.id}" ${String(quiz.id) === state.boardQuiz ? "selected" : ""}>${escapeHtml(quiz.title)}</option>`).join("")}</select>` : ""}</div>`;
-  return `<main class="main">${pageHead("The friendly competition", "Leaderboard", "A little bragging-rights board for the curious.", controls)}${leaderboardTable(entries, state.boardMode, me)}</main>`;
+  const subtitle = state.boardMode === "ranked"
+    ? "Build Siege-style ranks from Copper to Champion. High scores and harder quizzes earn more RP; low scores can lose points."
+    : "A little bragging-rights board for the curious.";
+  return `<main class="main">${pageHead("The friendly competition", "Leaderboard", subtitle, controls)}${leaderboardTable(entries, state.boardMode, me)}</main>`;
 }
 
 function historyPage() {
@@ -209,6 +249,7 @@ function historyPage() {
 function profilePage() {
   return `<main class="main">${pageHead("Your account", "Profile", "Keep your player details up to date.")}<div class="card profile-card">
     <div class="profile-heading"><span class="avatar large">${initials(state.user.username)}</span><div><h2>${escapeHtml(state.user.username)}</h2><p>${escapeHtml(state.user.email)} · ${state.user.role === "admin" ? "Teacher / admin" : "Player"}</p></div></div>
+    ${rankCard(state.user.rankedPoints, true)}
     <form id="profile-form"><div class="form-grid">
       <div class="field"><label for="profile-username">Username</label><input id="profile-username" name="username" maxlength="24" required value="${escapeHtml(state.user.username)}"></div>
       <div class="field"><label for="profile-email">Email address</label><input id="profile-email" name="email" type="email" required value="${escapeHtml(state.user.email)}"></div>
@@ -392,6 +433,7 @@ function resultsPage() {
   if (!result) return `<main class="main"><div class="card empty"><p>Loading your result…</p></div></main>`;
   const attempt = result.attempt;
   const percent = Math.round(attempt.points * 100 / attempt.totalQuestions);
+  const pointChange = Number(attempt.rankedPointsChange) || 0;
   const review = result.questions.map((question, index) => {
     const isCorrect = question.isCorrect;
     return `<article class="review-item ${isCorrect ? "correct" : "incorrect"}"><strong>${index + 1}. ${escapeHtml(question.questionText)}</strong>
@@ -400,6 +442,7 @@ function resultsPage() {
   }).join("");
   return `<main class="main"><section class="result-hero"><p class="eyebrow">Quiz complete</p><h1>${escapeHtml(attempt.quizTitle)}</h1>
     <div class="result-score">${attempt.points}<small> / ${attempt.totalQuestions}</small></div><h2>${percent}% correct</h2>
+    <div class="rank-change ${pointChange < 0 ? "down" : pointChange > 0 ? "up" : ""}">${pointChange > 0 ? "+" : ""}${pointChange} RP <span>· ${escapeHtml(result.ranked.label)}</span></div>
     <p class="subtitle">Finished ${fmtDate(attempt.finishedAt, { hour: "numeric", minute: "2-digit" })} · Time ${fmtDuration(attempt.startedAt, attempt.finishedAt)}</p>
     <div class="admin-actions" style="justify-content:center;margin-top:21px"><button class="button" data-action="retry-quiz" data-id="${attempt.quizId}">Try again</button><button class="button secondary" data-action="quiz-leaderboard" data-id="${attempt.quizId}">Quiz leaderboard</button><button class="button quiet" data-view="history">My history</button></div>
     </section><div class="section-row"><h2>Question review</h2><span class="muted" style="font-size:13px">${attempt.points} correct answers</span></div><section class="review-list">${review}</section></main>`;
@@ -570,6 +613,7 @@ async function resumeQuiz(id) {
 async function viewResult(id) {
   try {
     const data = await api(`/api/attempts/${id}/results`);
+    state.user.rankedPoints = data.ranked.points;
     state.result = data;
     state.view = "results";
     render();

@@ -4,6 +4,7 @@ const bcrypt = require("bcryptjs");
 const crypto = require("node:crypto");
 const path = require("node:path");
 const { sendPasswordResetEmail } = require("./lib/password-reset-email");
+const { rankInfo, rankedPointChange } = require("./lib/ranked");
 
 const app = express();
 app.locals.sendPasswordResetEmail = sendPasswordResetEmail;
@@ -73,7 +74,7 @@ async function requireAuth(req, res, next) {
       return res.status(401).json({ error: "Your session has expired. Please sign in again." });
     }
     const result = await pool.query(
-      "SELECT id, username, email, role, disabled, joined_at, session_version AS \"sessionVersion\" FROM users WHERE id = $1",
+      "SELECT id, username, email, role, disabled, joined_at, ranked_points AS \"rankedPoints\", session_version AS \"sessionVersion\" FROM users WHERE id = $1",
       [session.userId]
     );
     const user = result.rows[0];
@@ -180,7 +181,7 @@ async function normalizeQuestionPositions(client, questionIds) {
 }
 
 async function loadAttempt(attemptId, userId, lock = false, client = pool) {
-  const query = `SELECT a.*, q.title AS quiz_title, q.time_limit_seconds
+  const query = `SELECT a.*, q.title AS quiz_title, q.time_limit_seconds, q.difficulty AS quiz_difficulty
     FROM attempts a JOIN quizzes q ON q.id = a.quiz_id
     WHERE a.id = $1 AND a.user_id = $2 ${lock ? "FOR UPDATE OF a" : ""}`;
   const result = await client.query(query, [attemptId, userId]);
@@ -274,7 +275,7 @@ app.post("/api/auth/register", asyncRoute(async (req, res) => {
   const hash = await bcrypt.hash(password, 12);
   try {
     const created = await pool.query(
-      "INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username, email, role, joined_at",
+      "INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username, email, role, joined_at, ranked_points AS \"rankedPoints\"",
       [username, email, hash]
     );
     issueSession(res, created.rows[0].id);
@@ -288,7 +289,7 @@ app.post("/api/auth/register", asyncRoute(async (req, res) => {
 app.post("/api/auth/login", asyncRoute(async (req, res) => {
   const identity = String(req.body.identity || "").trim();
   const result = await pool.query(
-    "SELECT id, username, email, role, disabled, password_hash, session_version AS \"sessionVersion\" FROM users WHERE lower(username) = lower($1) OR lower(email) = lower($1)",
+    "SELECT id, username, email, role, disabled, password_hash, ranked_points AS \"rankedPoints\", session_version AS \"sessionVersion\" FROM users WHERE lower(username) = lower($1) OR lower(email) = lower($1)",
     [identity]
   );
   const user = result.rows[0];
@@ -308,7 +309,7 @@ app.post("/api/auth/login", asyncRoute(async (req, res) => {
   }
   loginFailures.delete(key);
   issueSession(res, user.id, user.sessionVersion);
-  res.json({ user: { id: user.id, username: user.username, email: user.email, role: user.role } });
+  res.json({ user: { id: user.id, username: user.username, email: user.email, role: user.role, rankedPoints: user.rankedPoints } });
 }));
 
 app.post("/api/auth/password-reset/request", asyncRoute(async (req, res) => {
@@ -522,7 +523,7 @@ app.post("/api/attempts/:id/finish", requireAuth, asyncRoute(async (req, res) =>
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "Attempt not found." });
     }
-    if (attempt.status === "completed") {
+  if (attempt.status === "completed") {
       await client.query("COMMIT");
       return res.json({ completed: true, alreadyCompleted: true, attemptId: attempt.id });
     }
@@ -539,12 +540,23 @@ app.post("/api/attempts/:id/finish", requireAuth, asyncRoute(async (req, res) =>
       );
     }
     const score = await client.query("SELECT COUNT(*)::int AS points FROM answer_events WHERE attempt_id = $1 AND is_correct = TRUE", [attempt.id]);
+    const userResult = await client.query("SELECT ranked_points FROM users WHERE id = $1 FOR UPDATE", [req.user.id]);
+    const previousRankedPoints = Number(userResult.rows[0].ranked_points);
+    const pointChange = rankedPointChange(score.rows[0].points, attempt.total_questions, attempt.quiz_difficulty);
+    const rankedPoints = Math.max(0, previousRankedPoints + pointChange);
     await client.query(
-      "UPDATE attempts SET status = 'completed', points = $1, finished_at = $2 WHERE id = $3",
-      [score.rows[0].points, finishedAt, attempt.id]
+      "UPDATE attempts SET status = 'completed', points = $1, ranked_points_change = $2, finished_at = $3 WHERE id = $4",
+      [score.rows[0].points, rankedPoints - previousRankedPoints, finishedAt, attempt.id]
     );
+    await client.query("UPDATE users SET ranked_points = $1 WHERE id = $2", [rankedPoints, req.user.id]);
     await client.query("COMMIT");
-    res.json({ completed: true, attemptId: attempt.id });
+    res.json({
+      completed: true,
+      attemptId: attempt.id,
+      rankedPoints,
+      rankedPointsChange: rankedPoints - previousRankedPoints,
+      rank: rankInfo(rankedPoints)
+    });
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -575,7 +587,8 @@ app.get("/api/attempts/:id/results", requireAuth, asyncRoute(async (req, res) =>
     [attempt.question_snapshot, attempt.id]
   );
   res.json({
-    attempt: { id: attempt.id, quizId: attempt.quiz_id, quizTitle: attempt.quiz_title, points: attempt.points, totalQuestions: attempt.total_questions, startedAt: attempt.started_at, finishedAt: attempt.finished_at, timeLimitSeconds: attempt.time_limit_seconds },
+    attempt: { id: attempt.id, quizId: attempt.quiz_id, quizTitle: attempt.quiz_title, points: attempt.points, totalQuestions: attempt.total_questions, startedAt: attempt.started_at, finishedAt: attempt.finished_at, timeLimitSeconds: attempt.time_limit_seconds, rankedPointsChange: attempt.ranked_points_change },
+    ranked: rankInfo(req.user.rankedPoints),
     questions: questions.rows
   });
 }));
@@ -605,6 +618,21 @@ app.get("/api/leaderboard/overall", requireAuth, asyncRoute(async (req, res) => 
   );
   const mine = result.rows.find((row) => row.id === req.user.id) || null;
   res.json({ entries: result.rows.slice(0, 10), me: mine });
+}));
+
+app.get("/api/leaderboard/ranked", requireAuth, asyncRoute(async (req, res) => {
+  const result = await pool.query(
+    `WITH board AS (
+      SELECT u.id, u.username, u.ranked_points AS "rankedPoints",
+        RANK() OVER (ORDER BY u.ranked_points DESC) AS rank
+      FROM users u
+      WHERE EXISTS (SELECT 1 FROM attempts a WHERE a.user_id = u.id AND a.status = 'completed')
+    )
+    SELECT * FROM board ORDER BY "rankedPoints" DESC, username ASC`
+  );
+  const entries = result.rows.map((entry) => ({ ...entry, rankInfo: rankInfo(entry.rankedPoints) }));
+  const mine = entries.find((entry) => entry.id === req.user.id) || null;
+  res.json({ entries: entries.slice(0, 10), me: mine });
 }));
 
 app.get("/api/leaderboard/quizzes/:id", requireAuth, asyncRoute(async (req, res) => {
@@ -645,7 +673,7 @@ app.patch("/api/me", requireAuth, asyncRoute(async (req, res) => {
     } else {
       await pool.query("UPDATE users SET username = $1, email = $2 WHERE id = $3", [username, email, req.user.id]);
     }
-    const user = await pool.query("SELECT id, username, email, role, joined_at AS \"joinedAt\", session_version AS \"sessionVersion\" FROM users WHERE id = $1", [req.user.id]);
+    const user = await pool.query("SELECT id, username, email, role, joined_at AS \"joinedAt\", ranked_points AS \"rankedPoints\", session_version AS \"sessionVersion\" FROM users WHERE id = $1", [req.user.id]);
     issueSession(res, user.rows[0].id, user.rows[0].sessionVersion);
     delete user.rows[0].sessionVersion;
     res.json({ user: user.rows[0] });

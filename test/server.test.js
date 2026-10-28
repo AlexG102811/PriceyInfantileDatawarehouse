@@ -186,10 +186,16 @@ test("scores retries correctly, ranks ties with competition ranks, and enforces 
   const delta = await registerUser();
 
   const firstRetry = await startAttempt(alpha, quizId);
-  await answerAndFinish(alpha, firstRetry, questionId, "b");
+  const firstFinish = await answerAndFinish(alpha, firstRetry, questionId, "b");
+  assert.equal(firstFinish.data.rankedPoints, 0);
+  assert.equal(firstFinish.data.rankedPointsChange, 0);
 
   const secondRetry = await startAttempt(alpha, quizId);
-  await answerAndFinish(alpha, secondRetry, questionId, "a");
+  const secondFinish = await answerAndFinish(alpha, secondRetry, questionId, "a");
+  assert.equal(secondFinish.data.rankedPoints, 15);
+  assert.equal(secondFinish.data.rankedPointsChange, 15);
+  const duplicateFinish = await request(alpha, `/api/attempts/${secondRetry}/finish`, { method: "POST", body: {} });
+  assert.equal(duplicateFinish.data.alreadyCompleted, true);
   const bravoAttempt = await startAttempt(bravo, quizId);
   await answerAndFinish(bravo, bravoAttempt, questionId, "a");
   const charlieAttempt = await startAttempt(charlie, quizId);
@@ -207,6 +213,18 @@ test("scores retries correctly, ranks ties with competition ranks, and enforces 
   assert.deepEqual(board.data.entries.map((entry) => entry.username), [bravo.username, charlie.username, alpha.username, delta.username]);
   assert.deepEqual(board.data.entries.map((entry) => Number(entry.rank)), [1, 1, 1, 4]);
   assert.deepEqual(board.data.entries.map((entry) => entry.bestPoints), [1, 1, 1, 0]);
+
+  const rankedBoard = await request(alpha, "/api/leaderboard/ranked");
+  assert.equal(rankedBoard.response.status, 200);
+  assert.deepEqual(rankedBoard.data.entries.map((entry) => entry.username), [alpha.username, bravo.username, charlie.username, delta.username]);
+  assert.deepEqual(rankedBoard.data.entries.map((entry) => Number(entry.rankedPoints)), [15, 15, 15, 0]);
+  assert.deepEqual(rankedBoard.data.entries.map((entry) => Number(entry.rank)), [1, 1, 1, 4]);
+  assert.equal(rankedBoard.data.entries[0].rankInfo.label, "Copper V");
+  const alphaResult = await request(alpha, `/api/attempts/${secondRetry}/results`);
+  assert.equal(alphaResult.data.attempt.rankedPointsChange, 15);
+  assert.equal(alphaResult.data.ranked.points, 15);
+  const alphaPoints = await appPool.query("SELECT ranked_points FROM users WHERE id = $1", [alpha.id]);
+  assert.equal(alphaPoints.rows[0].ranked_points, 15);
 
   const timedQuizId = await createQuiz(teacher, { title: "Timed expiry", timeLimitSeconds: 60 });
   const timedQuestionId = await addQuestion(teacher, timedQuizId, "Can time run out?");
