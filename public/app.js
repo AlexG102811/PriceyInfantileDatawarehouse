@@ -6,6 +6,7 @@ const state = {
   resetToken: "",
   quizzes: [],
   attempts: [],
+  rankHistory: [],
   boardMode: "overall",
   boardQuiz: "",
   attempt: null,
@@ -82,6 +83,55 @@ function rankCard(value, compact = false) {
       ${rank.progress == null ? `<div class="rank-progress" role="img" aria-label="Champion rank achieved"><span style="width:100%"></span></div>` : `<div class="rank-progress" role="img" aria-label="${rank.progress}% to next division"><span style="width:${rank.progress}%"></span></div>`}
     </div>
   </section>`;
+}
+
+function rankedProgressSection(items, currentPoints) {
+  const current = Math.max(0, Number(currentPoints) || 0);
+  if (!items.length) {
+    return `<section class="card rank-chart-card"><div class="section-row"><div><p class="eyebrow">Your ranked progress</p><h2>Rank points over time</h2></div></div><div class="empty rank-chart-empty"><div class="empty-icon">↗</div><h3>Your graph starts with your first quiz</h3><p>Complete a quiz to record your first ranked-points result.</p></div></section>`;
+  }
+
+  const values = [{ points: 0, label: "Starting points", quizTitle: "Start" }, ...items.map((item, index) => ({
+    points: Math.max(0, Number(item.pointsAfter) || 0),
+    label: `Quiz ${index + 1}`,
+    quizTitle: item.quizTitle,
+    pointsChange: Number(item.pointsChange) || 0,
+    finishedAt: item.finishedAt
+  }))];
+  const width = 760;
+  const height = 270;
+  const left = 58;
+  const right = 24;
+  const top = 18;
+  const bottom = 45;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const maxPoints = Math.max(40, Math.ceil(Math.max(...values.map((item) => item.points)) / 40) * 40);
+  const x = (index) => left + (values.length === 1 ? plotWidth : index / (values.length - 1) * plotWidth);
+  const y = (points) => top + plotHeight - points / maxPoints * plotHeight;
+  const coordinates = values.map((item, index) => `${x(index)},${y(item.points)}`);
+  const linePoints = coordinates.join(" ");
+  const areaPoints = `${left},${top + plotHeight} ${linePoints} ${left + plotWidth},${top + plotHeight}`;
+  const yTicks = [0, maxPoints / 4, maxPoints / 2, maxPoints * 3 / 4, maxPoints];
+  const xTickIndexes = values.length <= 3
+    ? values.map((_, index) => index)
+    : [...new Set([0, Math.floor((values.length - 1) / 2), values.length - 1])];
+  const dots = values.map((item, index) => {
+    const title = index === 0
+      ? `Starting points: 0 RP`
+      : `${item.quizTitle}: ${item.pointsChange > 0 ? "+" : ""}${item.pointsChange} RP, ${item.points} RP total`;
+    return `<circle class="rank-chart-dot" cx="${x(index)}" cy="${y(item.points)}" r="${index === values.length - 1 ? 5 : 3.5}"><title>${escapeHtml(title)}</title></circle>`;
+  }).join("");
+  const yAxis = yTicks.map((tick) => `<g><line class="rank-chart-grid" x1="${left}" y1="${y(tick)}" x2="${left + plotWidth}" y2="${y(tick)}"></line><text class="rank-chart-axis-label" x="${left - 10}" y="${y(tick) + 4}" text-anchor="end">${Math.round(tick)}</text></g>`).join("");
+  const xAxis = xTickIndexes.map((index) => {
+    const label = index === 0 ? "Start" : `${index} quiz${index === 1 ? "" : "zes"}`;
+    const anchor = index === 0 ? "start" : index === values.length - 1 ? "end" : "middle";
+    return `<text class="rank-chart-axis-label" x="${x(index)}" y="${height - 12}" text-anchor="${anchor}">${label}</text>`;
+  }).join("");
+  return `<section class="card rank-chart-card"><div class="section-row"><div><p class="eyebrow">Your ranked progress</p><h2>Rank points over time</h2><p class="subtitle">${items.length} completed quiz${items.length === 1 ? "" : "zes"} · ${current} RP now</p></div><span class="rank-label">${rankDetails(current).label}</span></div>
+    <div class="rank-chart-wrap"><svg class="rank-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Rank points by completed quiz. Current total: ${current} RP.">
+      ${yAxis}<polygon class="rank-chart-area" points="${areaPoints}"></polygon><polyline class="rank-chart-line" points="${linePoints}"></polyline>${dots}${xAxis}
+    </svg></div><p class="rank-chart-note">Each point shows your RP total after a completed quiz. Hover or tap a point for its quiz and RP change.</p></section>`;
 }
 
 async function api(url, options = {}) {
@@ -209,9 +259,13 @@ async function leaderboardPage() {
     entries = data.entries;
     me = data.me;
   } else if (state.boardMode === "ranked") {
-    const data = await api("/api/leaderboard/ranked");
+    const [data, history] = await Promise.all([
+      api("/api/leaderboard/ranked"),
+      api("/api/me/ranked-history")
+    ]);
     entries = data.entries;
     me = data.me;
+    state.rankHistory = history.points;
   } else {
     const quizId = state.boardQuiz || state.quizzes[0]?.id;
     if (!quizId) return `<main class="main">${pageHead("The friendly competition", "Leaderboard", "See who's been collecting points.")}<div class="card empty"><p>No quizzes are available.</p></div></main>`;
@@ -229,7 +283,7 @@ async function leaderboardPage() {
   const subtitle = state.boardMode === "ranked"
     ? "Build Siege-style ranks from Copper to Champion. High scores and harder quizzes earn more RP; low scores can lose points."
     : "A little bragging-rights board for the curious.";
-  return `<main class="main">${pageHead("The friendly competition", "Leaderboard", subtitle, controls)}${leaderboardTable(entries, state.boardMode, me)}</main>`;
+  return `<main class="main">${pageHead("The friendly competition", "Leaderboard", subtitle, controls)}${state.boardMode === "ranked" ? rankedProgressSection(state.rankHistory, state.user.rankedPoints) : ""}${leaderboardTable(entries, state.boardMode, me)}</main>`;
 }
 
 function historyPage() {

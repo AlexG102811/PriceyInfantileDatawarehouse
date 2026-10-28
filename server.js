@@ -545,8 +545,8 @@ app.post("/api/attempts/:id/finish", requireAuth, asyncRoute(async (req, res) =>
     const pointChange = rankedPointChange(score.rows[0].points, attempt.total_questions, attempt.quiz_difficulty);
     const rankedPoints = Math.max(0, previousRankedPoints + pointChange);
     await client.query(
-      "UPDATE attempts SET status = 'completed', points = $1, ranked_points_change = $2, finished_at = $3 WHERE id = $4",
-      [score.rows[0].points, rankedPoints - previousRankedPoints, finishedAt, attempt.id]
+      "UPDATE attempts SET status = 'completed', points = $1, ranked_points_change = $2, ranked_points_after = $3, finished_at = $4 WHERE id = $5",
+      [score.rows[0].points, rankedPoints - previousRankedPoints, rankedPoints, finishedAt, attempt.id]
     );
     await client.query("UPDATE users SET ranked_points = $1 WHERE id = $2", [rankedPoints, req.user.id]);
     await client.query("COMMIT");
@@ -603,6 +603,19 @@ app.get("/api/me/attempts", requireAuth, asyncRoute(async (req, res) => {
     [req.user.id]
   );
   res.json({ attempts: result.rows });
+}));
+
+app.get("/api/me/ranked-history", requireAuth, asyncRoute(async (req, res) => {
+  const result = await pool.query(
+    `SELECT a.id, q.title AS "quizTitle", a.finished_at AS "finishedAt",
+       a.ranked_points_change AS "pointsChange", a.ranked_points_after AS "pointsAfter"
+     FROM attempts a
+     JOIN quizzes q ON q.id = a.quiz_id
+     WHERE a.user_id = $1 AND a.status = 'completed'
+     ORDER BY a.finished_at ASC, a.id ASC`,
+    [req.user.id]
+  );
+  res.json({ points: result.rows });
 }));
 
 app.get("/api/leaderboard/overall", requireAuth, asyncRoute(async (req, res) => {

@@ -203,6 +203,22 @@ test("scores retries correctly, ranks ties with competition ranks, and enforces 
   const deltaAttempt = await startAttempt(delta, quizId);
   await answerAndFinish(delta, deltaAttempt, questionId, "b");
 
+  const rankedBoard = await request(alpha, "/api/leaderboard/ranked");
+  assert.equal(rankedBoard.response.status, 200);
+  assert.deepEqual(rankedBoard.data.entries.map((entry) => entry.username), [alpha.username, bravo.username, charlie.username, delta.username]);
+  assert.deepEqual(rankedBoard.data.entries.map((entry) => Number(entry.rankedPoints)), [15, 15, 15, 0]);
+  assert.deepEqual(rankedBoard.data.entries.map((entry) => Number(entry.rank)), [1, 1, 1, 4]);
+  assert.equal(rankedBoard.data.entries[0].rankInfo.label, "Copper V");
+  const alphaResult = await request(alpha, `/api/attempts/${secondRetry}/results`);
+  assert.equal(alphaResult.data.attempt.rankedPointsChange, 15);
+  assert.equal(alphaResult.data.ranked.points, 15);
+  const alphaRankHistory = await request(alpha, "/api/me/ranked-history");
+  assert.equal(alphaRankHistory.response.status, 200);
+  assert.deepEqual(alphaRankHistory.data.points.map((row) => Number(row.pointsAfter)), [0, 15]);
+  assert.deepEqual(alphaRankHistory.data.points.map((row) => Number(row.pointsChange)), [0, 15]);
+  const alphaPoints = await appPool.query("SELECT ranked_points FROM users WHERE id = $1", [alpha.id]);
+  assert.equal(alphaPoints.rows[0].ranked_points, 15);
+
   const tiedAt = new Date("2026-01-01T12:00:00.000Z");
   await appPool.query(
     "UPDATE attempts SET finished_at = $1 WHERE id = ANY($2::int[])",
@@ -213,18 +229,6 @@ test("scores retries correctly, ranks ties with competition ranks, and enforces 
   assert.deepEqual(board.data.entries.map((entry) => entry.username), [bravo.username, charlie.username, alpha.username, delta.username]);
   assert.deepEqual(board.data.entries.map((entry) => Number(entry.rank)), [1, 1, 1, 4]);
   assert.deepEqual(board.data.entries.map((entry) => entry.bestPoints), [1, 1, 1, 0]);
-
-  const rankedBoard = await request(alpha, "/api/leaderboard/ranked");
-  assert.equal(rankedBoard.response.status, 200);
-  assert.deepEqual(rankedBoard.data.entries.map((entry) => entry.username), [alpha.username, bravo.username, charlie.username, delta.username]);
-  assert.deepEqual(rankedBoard.data.entries.map((entry) => Number(entry.rankedPoints)), [15, 15, 15, 0]);
-  assert.deepEqual(rankedBoard.data.entries.map((entry) => Number(entry.rank)), [1, 1, 1, 4]);
-  assert.equal(rankedBoard.data.entries[0].rankInfo.label, "Copper V");
-  const alphaResult = await request(alpha, `/api/attempts/${secondRetry}/results`);
-  assert.equal(alphaResult.data.attempt.rankedPointsChange, 15);
-  assert.equal(alphaResult.data.ranked.points, 15);
-  const alphaPoints = await appPool.query("SELECT ranked_points FROM users WHERE id = $1", [alpha.id]);
-  assert.equal(alphaPoints.rows[0].ranked_points, 15);
 
   const timedQuizId = await createQuiz(teacher, { title: "Timed expiry", timeLimitSeconds: 60 });
   const timedQuestionId = await addQuestion(teacher, timedQuizId, "Can time run out?");

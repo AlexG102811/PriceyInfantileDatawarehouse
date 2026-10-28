@@ -79,6 +79,20 @@ h3 { margin-bottom: 7px; font-size: 17px; }
 .rank-change.up { color: #267349; background: #e6f7ec; }
 .rank-change.down { color: #a24237; background: #fff0ee; }
 .rank-change span { color: inherit; font-weight: 600; }
+.rank-chart-card { padding: 21px 24px; margin-bottom: 20px; }
+.rank-chart-card .section-row { margin-top: 0; align-items: center; }
+.rank-chart-card .section-row h2 { margin: 0 0 3px; }
+.rank-chart-wrap { width: 100%; overflow: hidden; }
+.rank-chart { display: block; width: 100%; height: auto; min-height: 190px; overflow: visible; }
+.rank-chart-grid { stroke: #e8eaf0; stroke-width: 1; }
+.rank-chart-axis-label { fill: #787d91; font: 12px "DM Sans", sans-serif; }
+.rank-chart-area { fill: #4f46e5; fill-opacity: .1; }
+.rank-chart-line { fill: none; stroke: #4f46e5; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.rank-chart-dot { fill: #fff; stroke: #4f46e5; stroke-width: 2.5; }
+.rank-chart-note { margin: 0; color: var(--muted); font-size: 12px; }
+.rank-chart-empty { padding: 22px 15px; }
+.rank-chart-empty h3 { margin-bottom: 5px; }
+.rank-chart-empty p { margin-bottom: 0; }
 .section-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 28px 0 16px; }
 .section-row h2 { margin: 0; }
 .text-link { border: 0; background: none; color: var(--indigo); font-weight: 700; padding: 6px 0; }
@@ -252,6 +266,9 @@ label { display: block; margin: 0 0 7px; font-weight: 700; font-size: 12px; }
   .rank-card { padding: 15px; gap: 13px; }
   .rank-emblem { flex-basis: 45px; width: 45px; height: 45px; }
   .rank-copy h2 { font-size: 18px; }
+  .rank-chart-card { padding: 17px 13px; }
+  .rank-chart { min-height: 150px; }
+  .rank-chart-axis-label { font-size: 13px; }
   .quiz-grid { grid-template-columns: 1fr; gap: 12px; }
   .quiz-card { min-height: 205px; }
   .stats-grid { gap: 9px; }
