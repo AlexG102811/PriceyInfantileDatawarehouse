@@ -7,6 +7,7 @@ const state = {
   quizzes: [],
   attempts: [],
   rankHistory: [],
+  shopItems: [],
   boardMode: "overall",
   boardQuiz: "",
   attempt: null,
@@ -34,6 +35,16 @@ const difficultyNames = { easy: "Easy", easy_medium: "Easy–medium", medium: "M
 const topicIcons = { Science: "✳", "World History": "⌛", Geography: "⌖", Literature: "Aa", Technology: "⌘" };
 const rankTiers = ["Copper", "Bronze", "Silver", "Gold", "Platinum", "Emerald", "Diamond", "Champion"];
 const rankDivisions = ["V", "IV", "III", "II", "I"];
+const shopAvatars = {
+  "avatar-star": { icon: "⭐", style: "avatar-star" },
+  "avatar-ballcap": { icon: "🧢", style: "avatar-ballcap" },
+  "avatar-shield": { icon: "🛡️", style: "avatar-shield" }
+};
+const shopTitles = {
+  "title-quiz-whiz": "Quiz Whiz",
+  "title-dugout-mvp": "Dugout MVP",
+  "title-clutch-caller": "Clutch Caller"
+};
 let pendingSaves = Promise.resolve();
 let questionShownAt = Date.now();
 let timerInterval = null;
@@ -44,6 +55,15 @@ function escapeHtml(value = "") {
 
 function initials(name = "?") {
   return escapeHtml(name.trim().slice(0, 1).toUpperCase() || "?");
+}
+
+function playerAvatar(user, large = false) {
+  const cosmetic = shopAvatars[user?.equippedAvatar];
+  return `<span class="avatar${large ? " large" : ""}${cosmetic ? ` cosmetic-avatar ${cosmetic.style}` : ""}">${cosmetic ? cosmetic.icon : initials(user?.username)}</span>`;
+}
+
+function playerTitle(user) {
+  return shopTitles[user?.equippedTitle] || "";
 }
 
 function fmtDate(value, options = {}) {
@@ -166,13 +186,13 @@ function header() {
   return `<header class="topbar"><div class="topbar-inner">
     <a class="brand" href="#" data-view="home"><span class="brand-mark">B</span> Brightside</a>
     <nav class="nav-links" aria-label="Main navigation">
-      ${navLink("home", "Home")}${navLink("quizzes", "Quizzes")}${navLink("leaderboard", "Leaderboard")}${navLink("history", "My history")}
+      ${navLink("home", "Home")}${navLink("quizzes", "Quizzes")}${navLink("leaderboard", "Leaderboard")}${navLink("shop", "Shop", "◈")}${navLink("history", "My history")}
       ${isAdmin ? navLink("admin", "Teacher tools") : ""}
     </nav>
-    <div class="top-user"><button class="avatar" data-view="profile" aria-label="Open profile">${initials(state.user?.username)}</button><span class="user-name">${escapeHtml(state.user?.username)}</span><button class="button quiet small" data-action="logout">Sign out</button></div>
+    <div class="top-user"><button class="avatar-button" data-view="profile" aria-label="Open profile">${playerAvatar(state.user)}</button><span class="user-label"><span class="user-name">${escapeHtml(state.user?.username)}</span>${playerTitle(state.user) ? `<small class="player-title">${escapeHtml(playerTitle(state.user))}</small>` : ""}</span><span class="top-shop-points" title="Shop points">✦ ${Number(state.user?.shopPoints) || 0}</span><button class="button quiet small" data-action="logout">Sign out</button></div>
   </div></header>
   <nav class="mobile-nav" aria-label="Mobile navigation">
-    ${navLink("home", "Home", "⌂")}${navLink("quizzes", "Quizzes", "▤")}${navLink("leaderboard", "Leaders", "♙")}${navLink("history", "History", "◷")}${state.user?.role === "admin" ? navLink("admin", "Admin", "⚙") : ""}
+    ${navLink("home", "Home", "⌂")}${navLink("quizzes", "Quizzes", "▤")}${navLink("leaderboard", "Leaders", "♙")}${navLink("shop", "Shop", "◈")}${navLink("history", "History", "◷")}${state.user?.role === "admin" ? navLink("admin", "Admin", "⚙") : ""}
   </nav>`;
 }
 
@@ -302,7 +322,7 @@ function historyPage() {
 
 function profilePage() {
   return `<main class="main">${pageHead("Your account", "Profile", "Keep your player details up to date.")}<div class="card profile-card">
-    <div class="profile-heading"><span class="avatar large">${initials(state.user.username)}</span><div><h2>${escapeHtml(state.user.username)}</h2><p>${escapeHtml(state.user.email)} · ${state.user.role === "admin" ? "Teacher / admin" : "Player"}</p></div></div>
+    <div class="profile-heading">${playerAvatar(state.user, true)}<div><h2>${escapeHtml(state.user.username)}</h2><p>${escapeHtml(state.user.email)} · ${state.user.role === "admin" ? "Teacher / admin" : "Player"}${playerTitle(state.user) ? ` · ${escapeHtml(playerTitle(state.user))}` : ""}</p></div></div>
     ${rankCard(state.user.rankedPoints, true)}
     <form id="profile-form"><div class="form-grid">
       <div class="field"><label for="profile-username">Username</label><input id="profile-username" name="username" maxlength="24" required value="${escapeHtml(state.user.username)}"></div>
@@ -312,6 +332,31 @@ function profilePage() {
     <button class="button" type="submit">Save profile</button></form>
     <div class="separator"></div><h3>Delete your account</h3><p class="subtitle" style="margin-bottom:15px">This permanently removes your account and leaderboard entries.</p><button class="button danger" data-action="delete-account">Delete account</button>
   </div></main>`;
+}
+
+function shopPage() {
+  const categories = [
+    ["avatar", "Player badges"],
+    ["title", "Player titles"],
+    ["theme", "App themes"]
+  ];
+  const content = categories.map(([category, title]) => {
+    const items = state.shopItems.filter((item) => item.category === category);
+    return `<section class="shop-category"><div class="section-row"><h2>${title}</h2></div><div class="shop-grid">${items.map((item) => {
+      const action = item.equipped
+        ? `<button class="button small secondary" disabled>Equipped</button>`
+        : item.owned
+          ? `<button class="button small secondary" data-action="equip-shop-item" data-id="${escapeHtml(item.id)}">Equip</button>`
+          : `<button class="button small" data-action="buy-shop-item" data-id="${escapeHtml(item.id)}" ${Number(state.user.shopPoints) < item.price ? "disabled" : ""}>Buy · ${item.price} ✦</button>`;
+      const status = item.equipped ? `<span class="shop-status equipped">Equipped</span>` : item.owned ? `<span class="shop-status owned">Owned</span>` : "";
+      return `<article class="card shop-item"><div class="shop-item-head"><span class="shop-icon" aria-hidden="true">${escapeHtml(item.icon)}</span>${status}</div>
+        <p class="eyebrow">${escapeHtml(category)}</p><h3>${escapeHtml(item.name)}</h3><p class="shop-description">${escapeHtml(item.description)}</p>
+        <div class="shop-item-footer"><span class="shop-price">${item.price} ✦</span>${action}</div></article>`;
+    }).join("") || `<div class="card empty">More items coming soon.</div>`}</div></section>`;
+  }).join("");
+  return `<main class="main"><div class="page-head"><div><p class="eyebrow">Quiz rewards</p><h1>Fun stuff for your player</h1><p class="subtitle">Earn shop points from every completed quiz, then spend them on badges, titles, and app themes.</p></div><div class="shop-wallet"><span aria-hidden="true">✦</span><div><strong>${Number(state.user.shopPoints) || 0}</strong><small>shop points</small></div></div></div>
+    <div class="alert info shop-earn-note">Each completed quiz gives 5 shop points plus 1 for each correct answer, up to 25. These are separate from ranked points.</div>
+    ${content}</main>`;
 }
 
 function questionRow(question) {
@@ -488,6 +533,7 @@ function resultsPage() {
   const attempt = result.attempt;
   const percent = Math.round(attempt.points * 100 / attempt.totalQuestions);
   const pointChange = Number(attempt.rankedPointsChange) || 0;
+  const shopPointsEarned = Number(attempt.shopPointsEarned) || 0;
   const review = result.questions.map((question, index) => {
     const isCorrect = question.isCorrect;
     return `<article class="review-item ${isCorrect ? "correct" : "incorrect"}"><strong>${index + 1}. ${escapeHtml(question.questionText)}</strong>
@@ -497,8 +543,9 @@ function resultsPage() {
   return `<main class="main"><section class="result-hero"><p class="eyebrow">Quiz complete</p><h1>${escapeHtml(attempt.quizTitle)}</h1>
     <div class="result-score">${attempt.points}<small> / ${attempt.totalQuestions}</small></div><h2>${percent}% correct</h2>
     <div class="rank-change ${pointChange < 0 ? "down" : pointChange > 0 ? "up" : ""}">${pointChange > 0 ? "+" : ""}${pointChange} RP <span>· ${escapeHtml(result.ranked.label)}</span></div>
+    <div class="shop-reward">✦ +${shopPointsEarned} shop points <span>· ${Number(result.shopPoints) || 0} total</span></div>
     <p class="subtitle">Finished ${fmtDate(attempt.finishedAt, { hour: "numeric", minute: "2-digit" })} · Time ${fmtDuration(attempt.startedAt, attempt.finishedAt)}</p>
-    <div class="admin-actions" style="justify-content:center;margin-top:21px"><button class="button" data-action="retry-quiz" data-id="${attempt.quizId}">Try again</button><button class="button secondary" data-action="quiz-leaderboard" data-id="${attempt.quizId}">Quiz leaderboard</button><button class="button quiet" data-view="history">My history</button></div>
+    <div class="admin-actions" style="justify-content:center;margin-top:21px"><button class="button" data-action="retry-quiz" data-id="${attempt.quizId}">Try again</button><button class="button secondary" data-view="shop">Visit shop</button><button class="button secondary" data-action="quiz-leaderboard" data-id="${attempt.quizId}">Quiz leaderboard</button><button class="button quiet" data-view="history">My history</button></div>
     </section><div class="section-row"><h2>Question review</h2><span class="muted" style="font-size:13px">${attempt.points} correct answers</span></div><section class="review-list">${review}</section></main>`;
 }
 
@@ -553,6 +600,7 @@ function modalMarkup() {
 function render() {
   clearInterval(timerInterval);
   timerInterval = null;
+  document.body.dataset.shopTheme = state.user?.equippedTheme || "default";
   if (!state.user) {
     appRoot.innerHTML = authPage();
     return;
@@ -562,6 +610,7 @@ function render() {
   else if (state.view === "quizzes") content = quizzesPage();
   else if (state.view === "leaderboard") content = typeof leaderboardPageResult === "string" ? leaderboardPageResult : `<main class="main"><div class="card empty"><p>Loading leaderboard…</p></div></main>`;
   else if (state.view === "history") content = historyPage();
+  else if (state.view === "shop") content = shopPage();
   else if (state.view === "profile") content = profilePage();
   else if (state.view === "admin") content = adminPage();
   else if (state.view === "play") content = playPage();
@@ -599,6 +648,7 @@ async function navigate(view) {
       leaderboardPageResult = "";
       if (view === "leaderboard") leaderboardPageResult = await leaderboardPage();
     }
+    if (view === "shop") await loadShop();
     if (view === "history") await loadAttempts();
     if (view === "admin") {
       if (state.user.role !== "admin") throw new Error("Teacher access is required.");
@@ -621,6 +671,12 @@ async function navigate(view) {
 async function loadProfile() {
   const data = await api("/api/auth/me");
   state.user = data.user;
+}
+
+async function loadShop() {
+  const data = await api("/api/shop");
+  state.shopItems = data.items;
+  state.user.shopPoints = data.balance;
 }
 
 async function startQuiz(id) {
@@ -668,6 +724,7 @@ async function viewResult(id) {
   try {
     const data = await api(`/api/attempts/${id}/results`);
     state.user.rankedPoints = data.ranked.points;
+    state.user.shopPoints = Number(data.shopPoints) || 0;
     state.result = data;
     state.view = "results";
     render();
@@ -751,6 +808,7 @@ async function handleSubmit(event) {
         const endpoint = mode === "register" ? "/api/auth/register" : "/api/auth/login";
         const result = await api(endpoint, { method: "POST", body: JSON.stringify(values) });
         state.user = result.user;
+        await loadProfile();
         state.view = "home";
         await navigate("home");
       }
@@ -865,6 +923,21 @@ async function actionClick(action, button) {
     await resumeQuiz(id);
   } else if (action === "view-result") {
     await viewResult(id);
+  } else if (action === "buy-shop-item") {
+    try {
+      const result = await api(`/api/shop/items/${encodeURIComponent(id)}/purchase`, { method: "POST", body: "{}" });
+      state.user.shopPoints = result.balance;
+      await loadShop();
+      render();
+      toast("Item purchased. Equip it from your shop.");
+    } catch (error) { toast(error.message, "error"); }
+  } else if (action === "equip-shop-item") {
+    try {
+      await api(`/api/shop/items/${encodeURIComponent(id)}/equip`, { method: "POST", body: "{}" });
+      await Promise.all([loadProfile(), loadShop()]);
+      render();
+      toast("Cosmetic equipped.");
+    } catch (error) { toast(error.message, "error"); }
   } else if (action === "choose-answer") {
     const attempt = state.attempt;
     const question = attempt?.questions[attempt.index];

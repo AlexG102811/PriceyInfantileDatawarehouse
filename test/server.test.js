@@ -189,11 +189,13 @@ test("scores retries correctly, ranks ties with competition ranks, and enforces 
   const firstFinish = await answerAndFinish(alpha, firstRetry, questionId, "b");
   assert.equal(firstFinish.data.rankedPoints, 0);
   assert.equal(firstFinish.data.rankedPointsChange, 0);
+  assert.equal(firstFinish.data.shopPointsEarned, 5);
 
   const secondRetry = await startAttempt(alpha, quizId);
   const secondFinish = await answerAndFinish(alpha, secondRetry, questionId, "a");
   assert.equal(secondFinish.data.rankedPoints, 15);
   assert.equal(secondFinish.data.rankedPointsChange, 15);
+  assert.equal(secondFinish.data.shopPointsEarned, 6);
   const duplicateFinish = await request(alpha, `/api/attempts/${secondRetry}/finish`, { method: "POST", body: {} });
   assert.equal(duplicateFinish.data.alreadyCompleted, true);
   const bravoAttempt = await startAttempt(bravo, quizId);
@@ -218,6 +220,23 @@ test("scores retries correctly, ranks ties with competition ranks, and enforces 
   assert.deepEqual(alphaRankHistory.data.points.map((row) => Number(row.pointsChange)), [0, 15]);
   const alphaPoints = await appPool.query("SELECT ranked_points FROM users WHERE id = $1", [alpha.id]);
   assert.equal(alphaPoints.rows[0].ranked_points, 15);
+  const alphaShop = await request(alpha, "/api/shop");
+  assert.equal(alphaShop.response.status, 200);
+  assert.equal(alphaShop.data.balance, 11);
+  assert.equal(alphaShop.data.items.find((item) => item.id === "avatar-star").owned, false);
+  const tooExpensive = await request(alpha, "/api/shop/items/theme-emerald/purchase", { method: "POST", body: {} });
+  assert.equal(tooExpensive.response.status, 409);
+  const purchase = await request(alpha, "/api/shop/items/avatar-star/purchase", { method: "POST", body: {} });
+  assert.equal(purchase.response.status, 200);
+  assert.equal(purchase.data.balance, 6);
+  const duplicatePurchase = await request(alpha, "/api/shop/items/avatar-star/purchase", { method: "POST", body: {} });
+  assert.equal(duplicatePurchase.response.status, 409);
+  const equip = await request(alpha, "/api/shop/items/avatar-star/equip", { method: "POST", body: {} });
+  assert.equal(equip.response.status, 200);
+  const playerProfile = await request(alpha, "/api/auth/me");
+  assert.equal(playerProfile.data.user.equippedAvatar, "avatar-star");
+  assert.equal(playerProfile.data.user.shopPoints, 6);
+  assert.equal(playerProfile.data.user.rankedPoints, 15);
 
   const tiedAt = new Date("2026-01-01T12:00:00.000Z");
   await appPool.query(

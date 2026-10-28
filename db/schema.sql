@@ -6,13 +6,15 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL DEFAULT 'player' CHECK (role IN ('player', 'admin')),
   joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   disabled BOOLEAN NOT NULL DEFAULT FALSE,
-  ranked_points INTEGER NOT NULL DEFAULT 0 CHECK (ranked_points >= 0)
+  ranked_points INTEGER NOT NULL DEFAULT 0 CHECK (ranked_points >= 0),
+  shop_points INTEGER NOT NULL DEFAULT 0 CHECK (shop_points >= 0)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (lower(username));
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_idx ON users (lower(email));
 ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS ranked_points INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS shop_points INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
   id SERIAL PRIMARY KEY,
@@ -59,6 +61,7 @@ CREATE TABLE IF NOT EXISTS attempts (
   total_questions INTEGER NOT NULL CHECK (total_questions > 0),
   ranked_points_change INTEGER NOT NULL DEFAULT 0,
   ranked_points_after INTEGER NOT NULL DEFAULT 0 CHECK (ranked_points_after >= 0),
+  shop_points_earned INTEGER NOT NULL DEFAULT 0 CHECK (shop_points_earned >= 0),
   question_snapshot INTEGER[] NOT NULL,
   started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   finished_at TIMESTAMPTZ,
@@ -67,6 +70,7 @@ CREATE TABLE IF NOT EXISTS attempts (
 );
 ALTER TABLE attempts ADD COLUMN IF NOT EXISTS ranked_points_change INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE attempts ADD COLUMN IF NOT EXISTS ranked_points_after INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS shop_points_earned INTEGER NOT NULL DEFAULT 0;
 
 WITH RECURSIVE ordered_attempts AS (
   SELECT id, user_id, ranked_points_change,
@@ -89,6 +93,18 @@ UPDATE attempts a
 SET ranked_points_after = ranked_history.points_after
 FROM ranked_history
 WHERE ranked_history.id = a.id;
+
+CREATE TABLE IF NOT EXISTS user_shop_items (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_id TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN ('avatar', 'title', 'theme')),
+  purchased_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  equipped BOOLEAN NOT NULL DEFAULT FALSE,
+  PRIMARY KEY (user_id, item_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS user_shop_items_one_equipped_category_idx
+  ON user_shop_items(user_id, category) WHERE equipped = TRUE;
 
 CREATE INDEX IF NOT EXISTS attempts_user_finished_idx ON attempts(user_id, finished_at DESC);
 CREATE INDEX IF NOT EXISTS attempts_quiz_status_idx ON attempts(quiz_id, status);

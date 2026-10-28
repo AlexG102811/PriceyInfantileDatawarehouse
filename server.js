@@ -5,6 +5,7 @@ const crypto = require("node:crypto");
 const path = require("node:path");
 const { sendPasswordResetEmail } = require("./lib/password-reset-email");
 const { rankInfo, rankedPointChange } = require("./lib/ranked");
+const { SHOP_ITEMS, shopPointsForQuiz } = require("./lib/shop");
 
 const app = express();
 app.locals.sendPasswordResetEmail = sendPasswordResetEmail;
@@ -74,7 +75,13 @@ async function requireAuth(req, res, next) {
       return res.status(401).json({ error: "Your session has expired. Please sign in again." });
     }
     const result = await pool.query(
-      "SELECT id, username, email, role, disabled, joined_at, ranked_points AS \"rankedPoints\", session_version AS \"sessionVersion\" FROM users WHERE id = $1",
+      `SELECT id, username, email, role, disabled, joined_at,
+        ranked_points AS "rankedPoints", shop_points AS "shopPoints",
+        session_version AS "sessionVersion",
+        (SELECT item_id FROM user_shop_items WHERE user_id = users.id AND category = 'avatar' AND equipped) AS "equippedAvatar",
+        (SELECT item_id FROM user_shop_items WHERE user_id = users.id AND category = 'title' AND equipped) AS "equippedTitle",
+        (SELECT item_id FROM user_shop_items WHERE user_id = users.id AND category = 'theme' AND equipped) AS "equippedTheme"
+       FROM users WHERE id = $1`,
       [session.userId]
     );
     const user = result.rows[0];
@@ -275,7 +282,7 @@ app.post("/api/auth/register", asyncRoute(async (req, res) => {
   const hash = await bcrypt.hash(password, 12);
   try {
     const created = await pool.query(
-      "INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username, email, role, joined_at, ranked_points AS \"rankedPoints\"",
+      "INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username, email, role, joined_at, ranked_points AS \"rankedPoints\", shop_points AS \"shopPoints\"",
       [username, email, hash]
     );
     issueSession(res, created.rows[0].id);
@@ -289,7 +296,7 @@ app.post("/api/auth/register", asyncRoute(async (req, res) => {
 app.post("/api/auth/login", asyncRoute(async (req, res) => {
   const identity = String(req.body.identity || "").trim();
   const result = await pool.query(
-    "SELECT id, username, email, role, disabled, password_hash, ranked_points AS \"rankedPoints\", session_version AS \"sessionVersion\" FROM users WHERE lower(username) = lower($1) OR lower(email) = lower($1)",
+    "SELECT id, username, email, role, disabled, password_hash, ranked_points AS \"rankedPoints\", shop_points AS \"shopPoints\", session_version AS \"sessionVersion\" FROM users WHERE lower(username) = lower($1) OR lower(email) = lower($1)",
     [identity]
   );
   const user = result.rows[0];
@@ -309,7 +316,7 @@ app.post("/api/auth/login", asyncRoute(async (req, res) => {
   }
   loginFailures.delete(key);
   issueSession(res, user.id, user.sessionVersion);
-  res.json({ user: { id: user.id, username: user.username, email: user.email, role: user.role, rankedPoints: user.rankedPoints } });
+  res.json({ user: { id: user.id, username: user.username, email: user.email, role: user.role, rankedPoints: user.rankedPoints, shopPoints: user.shopPoints } });
 }));
 
 app.post("/api/auth/password-reset/request", asyncRoute(async (req, res) => {
@@ -544,18 +551,24 @@ app.post("/api/attempts/:id/finish", requireAuth, asyncRoute(async (req, res) =>
     const previousRankedPoints = Number(userResult.rows[0].ranked_points);
     const pointChange = rankedPointChange(score.rows[0].points, attempt.total_questions, attempt.quiz_difficulty);
     const rankedPoints = Math.max(0, previousRankedPoints + pointChange);
+    const shopPointsEarned = shopPointsForQuiz(score.rows[0].points);
     await client.query(
-      "UPDATE attempts SET status = 'completed', points = $1, ranked_points_change = $2, ranked_points_after = $3, finished_at = $4 WHERE id = $5",
-      [score.rows[0].points, rankedPoints - previousRankedPoints, rankedPoints, finishedAt, attempt.id]
+      "UPDATE attempts SET status = 'completed', points = $1, ranked_points_change = $2, ranked_points_after = $3, shop_points_earned = $4, finished_at = $5 WHERE id = $6",
+      [score.rows[0].points, rankedPoints - previousRankedPoints, rankedPoints, shopPointsEarned, finishedAt, attempt.id]
     );
-    await client.query("UPDATE users SET ranked_points = $1 WHERE id = $2", [rankedPoints, req.user.id]);
+    const updatedUser = await client.query(
+      "UPDATE users SET ranked_points = $1, shop_points = shop_points + $2 WHERE id = $3 RETURNING shop_points",
+      [rankedPoints, shopPointsEarned, req.user.id]
+    );
     await client.query("COMMIT");
     res.json({
       completed: true,
       attemptId: attempt.id,
       rankedPoints,
       rankedPointsChange: rankedPoints - previousRankedPoints,
-      rank: rankInfo(rankedPoints)
+      rank: rankInfo(rankedPoints),
+      shopPointsEarned,
+      shopPoints: updatedUser.rows[0].shop_points
     });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -587,8 +600,9 @@ app.get("/api/attempts/:id/results", requireAuth, asyncRoute(async (req, res) =>
     [attempt.question_snapshot, attempt.id]
   );
   res.json({
-    attempt: { id: attempt.id, quizId: attempt.quiz_id, quizTitle: attempt.quiz_title, points: attempt.points, totalQuestions: attempt.total_questions, startedAt: attempt.started_at, finishedAt: attempt.finished_at, timeLimitSeconds: attempt.time_limit_seconds, rankedPointsChange: attempt.ranked_points_change },
+    attempt: { id: attempt.id, quizId: attempt.quiz_id, quizTitle: attempt.quiz_title, points: attempt.points, totalQuestions: attempt.total_questions, startedAt: attempt.started_at, finishedAt: attempt.finished_at, timeLimitSeconds: attempt.time_limit_seconds, rankedPointsChange: attempt.ranked_points_change, shopPointsEarned: attempt.shop_points_earned },
     ranked: rankInfo(req.user.rankedPoints),
+    shopPoints: req.user.shopPoints,
     questions: questions.rows
   });
 }));
@@ -616,6 +630,92 @@ app.get("/api/me/ranked-history", requireAuth, asyncRoute(async (req, res) => {
     [req.user.id]
   );
   res.json({ points: result.rows });
+}));
+
+app.get("/api/shop", requireAuth, asyncRoute(async (req, res) => {
+  const owned = await pool.query(
+    "SELECT item_id AS \"itemId\", equipped FROM user_shop_items WHERE user_id = $1",
+    [req.user.id]
+  );
+  const ownedById = new Map(owned.rows.map((item) => [item.itemId, item]));
+  res.json({
+    balance: req.user.shopPoints,
+    items: SHOP_ITEMS.map((item) => ({
+      ...item,
+      owned: ownedById.has(item.id),
+      equipped: Boolean(ownedById.get(item.id)?.equipped)
+    }))
+  });
+}));
+
+app.post("/api/shop/items/:itemId/purchase", requireAuth, asyncRoute(async (req, res) => {
+  const item = SHOP_ITEMS.find((candidate) => candidate.id === req.params.itemId);
+  if (!item) return res.status(404).json({ error: "Shop item not found." });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const user = await client.query("SELECT shop_points FROM users WHERE id = $1 FOR UPDATE", [req.user.id]);
+    const current = Number(user.rows[0].shop_points);
+    const existing = await client.query(
+      "SELECT 1 FROM user_shop_items WHERE user_id = $1 AND item_id = $2",
+      [req.user.id, item.id]
+    );
+    if (existing.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "You already own this item." });
+    }
+    if (current < item.price) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: `You need ${item.price - current} more shop points to buy this.` });
+    }
+    const updated = await client.query(
+      "UPDATE users SET shop_points = shop_points - $1 WHERE id = $2 RETURNING shop_points",
+      [item.price, req.user.id]
+    );
+    await client.query(
+      "INSERT INTO user_shop_items (user_id, item_id, category) VALUES ($1, $2, $3)",
+      [req.user.id, item.id, item.category]
+    );
+    await client.query("COMMIT");
+    res.json({ purchased: true, itemId: item.id, balance: updated.rows[0].shop_points });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.post("/api/shop/items/:itemId/equip", requireAuth, asyncRoute(async (req, res) => {
+  const item = SHOP_ITEMS.find((candidate) => candidate.id === req.params.itemId);
+  if (!item) return res.status(404).json({ error: "Shop item not found." });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const owned = await client.query(
+      "SELECT 1 FROM user_shop_items WHERE user_id = $1 AND item_id = $2 FOR UPDATE",
+      [req.user.id, item.id]
+    );
+    if (!owned.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "Buy this item before equipping it." });
+    }
+    await client.query(
+      "UPDATE user_shop_items SET equipped = FALSE WHERE user_id = $1 AND category = $2",
+      [req.user.id, item.category]
+    );
+    await client.query(
+      "UPDATE user_shop_items SET equipped = TRUE WHERE user_id = $1 AND item_id = $2",
+      [req.user.id, item.id]
+    );
+    await client.query("COMMIT");
+    res.json({ equipped: true, itemId: item.id });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }));
 
 app.get("/api/leaderboard/overall", requireAuth, asyncRoute(async (req, res) => {
@@ -686,7 +786,16 @@ app.patch("/api/me", requireAuth, asyncRoute(async (req, res) => {
     } else {
       await pool.query("UPDATE users SET username = $1, email = $2 WHERE id = $3", [username, email, req.user.id]);
     }
-    const user = await pool.query("SELECT id, username, email, role, joined_at AS \"joinedAt\", ranked_points AS \"rankedPoints\", session_version AS \"sessionVersion\" FROM users WHERE id = $1", [req.user.id]);
+    const user = await pool.query(
+      `SELECT id, username, email, role, joined_at AS "joinedAt",
+        ranked_points AS "rankedPoints", shop_points AS "shopPoints",
+        session_version AS "sessionVersion",
+        (SELECT item_id FROM user_shop_items WHERE user_id = users.id AND category = 'avatar' AND equipped) AS "equippedAvatar",
+        (SELECT item_id FROM user_shop_items WHERE user_id = users.id AND category = 'title' AND equipped) AS "equippedTitle",
+        (SELECT item_id FROM user_shop_items WHERE user_id = users.id AND category = 'theme' AND equipped) AS "equippedTheme"
+       FROM users WHERE id = $1`,
+      [req.user.id]
+    );
     issueSession(res, user.rows[0].id, user.rows[0].sessionVersion);
     delete user.rows[0].sessionVersion;
     res.json({ user: user.rows[0] });
